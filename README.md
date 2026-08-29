@@ -1,191 +1,232 @@
 # Automated Sales Pipeline
 
-Fundação do repositório para o desafio técnico **Automated Sales Pipeline — 20260825**. O objetivo final é reduzir o trabalho manual de recebimento, tratamento, consolidação e disponibilização de dados comerciais fictícios de um grupo automotivo multimarcas.
+Pipeline local e reproduzível para receber, validar, consolidar e disponibilizar os dados fictícios de vendas do desafio **Automated Sales Pipeline — 20260825**.
 
-> **Estado atual:** a Fase 1 implementa somente descoberta, leitura segura e validação estrutural. Regras de qualidade, transformações, DuckDB e interface NiceGUI continuam não implementados.
+**Estado atual:** a Fase 2A estabiliza a ingestão segura existente, o tratamento em Pandas, as regras de qualidade, a persistência em DuckDB/Parquet, a quarentena, o dashboard Streamlit e a exportação CSV. Não há cloud, Docker, banco externo, autenticação ou MCP.
 
-## Escopo desta entrega
+## Mapeamento do desafio
 
-Esta etapa adiciona uma CLI independente para inspecionar um ZIP, um CSV ou um diretório, validar o formato real e conferir os schemas conhecidos. Os arquivos fornecidos permanecem na raiz, exatamente onde foram recebidos:
-
-- `Technical Challenge - Automated Sales Pipeline.md`;
-- `Teste_Tecnico_Dados_Candidato_20260825.zip`.
-
-Nenhum original é movido, renomeado, regravado ou duplicado. Para ZIPs aprovados, somente os CSVs permitidos são extraídos em um diretório temporário do sistema, carregados em memória e removidos automaticamente. Nenhum dado processado é gravado nesta fase. Também não foram adicionados cloud, Docker, banco externo, autenticação, MCP ou outros serviços externos.
-
-## Mapeamento dos requisitos do desafio
-
-Os arquivos podem estar incompletos, inconsistentes ou conter outros problemas de qualidade. Nesta fase, formatos e chaves candidatas foram observados e documentados; regras de tratamento, critérios de validade e o modelo analítico serão definidos somente em etapas futuras.
-
-| Requisito final | Abordagem planejada | Situação atual |
+| Requisito | Implementação atual | Verificação |
 | --- | --- | --- |
-| 1. Receber os arquivos | Aceitar ZIP, CSV ou diretório local sem modificar as fontes. | Fase 1 concluída |
-| 2. Compreender e relacionar as estruturas | Validar os quatro schemas reais e documentar chaves e relacionamentos aparentes. | Estrutura concluída; joins não implementados |
-| 3. Identificar problemas de qualidade | Documentar observações; regras e quarentena serão definidas em fase posterior. | Apenas descoberta |
-| 4. Realizar os tratamentos necessários | Aplicar transformações determinísticas e justificadas com Pandas. | Planejado |
-| 5. Consolidar as informações | Consolidar localmente com Pandas e DuckDB, sem banco externo. | Planejado |
-| 6. Gerar uma camada adequada para análise | Publicar dados tratados em `data/processed/`, com consultas locais no DuckDB e artefatos em `output/`. | Planejado |
-| 7. Permitir novas execuções | Expor CLI determinística e cobrir a ingestão com Pytest. | Parcialmente concluído |
-| Repositório organizado e documentado | Manter estrutura simples, dependências explícitas, decisões e instruções neste README. | Fundação criada |
-| Ferramentas externas e IA documentadas | Registrar finalidade, forma de reprodução, uso de IA e validações realizadas. | Documentado abaixo |
+| Receber os arquivos | `pipeline.py` aceita ZIP, CSV ou diretório local, valida formato e não modifica a origem. | Testes de ingestão segura e hash do ZIP. |
+| Compreender e relacionar estruturas | Quatro schemas conhecidos são consolidados; vendas são relacionadas a consultores, lojas e veículos. | Testes de schema, joins e integridade referencial. |
+| Identificar qualidade | Catálogo explícito com 18 regras, severidade, condição, tratamento e motivo. | `quality_report.csv`, tabela `quality_report` e testes artificiais. |
+| Realizar tratamentos | Limpeza textual, IDs normalizados, três formatos de data, dinheiro decimal, deduplicação e cálculo de descontos. | Testes de datas, centavos, duplicatas e resultados reais. |
+| Consolidar informações | Fato de vendas, dimensões e mart mensal persistidos em DuckDB local. | Contagens e agregações consultadas após cada execução controlada. |
+| Gerar camada analítica | `fact_sales_pipeline.parquet`, tabelas DuckDB e relatório de qualidade. | Schema monetário `DECIMAL`, leitura DuckDB e Parquet testadas. |
+| Permitir reexecuções | CLI com destinos explícitos, staging e publicação com rollback. | Duas execuções produzem o mesmo conteúdo lógico e os mesmos hashes de CSV/Parquet. |
+| Disponibilizar análise | Dashboard Streamlit com KPIs, filtros, gráficos, qualidade, dados e download. | Teste do caso vazio e validação local do dashboard. |
+| Organizar e documentar | Estrutura simples, comandos Windows, segurança, dependências e uso de IA documentados. | Pytest, Ruff, pip-audit e `git diff --check`. |
 
-## Estrutura
+## Arquitetura
+
+```text
+ZIP/CSV/diretório (somente leitura)
+        |
+        v
+pipeline.py: descoberta, limites, schemas e rastreabilidade
+        |
+        v
+build_pipeline.py: normalização, regras, joins e métricas
+        |
+        +--> data/output/       DuckDB, Parquet e quality_report.csv
+        +--> data/quarantine/   rejected_sales.csv
+                    |
+                    +--> dashboard.py / export_csv.py
+```
+
+Os artefatos são gerados primeiro em diretórios temporários no mesmo volume. A publicação usa substituições de arquivo e restaura a versão anterior se uma substituição falhar durante o processo.
+
+## Estrutura relevante
 
 ```text
 .
 ├── data/
-│   ├── incoming/      # entradas locais, preservadas sem alteração
-│   ├── processed/     # dados gerados e aprovados
-│   └── quarantine/    # dados gerados e rejeitados pelas validações
-├── output/            # relatórios e exportações gerados
-├── tests/             # testes artificiais da ingestão
-├── .gitignore
-├── AGENTS.md
-├── README.md
-├── SECURITY.md
+│   ├── incoming/       # entrada original local e imutável
+│   ├── output/         # banco, Parquet e relatório gerados
+│   ├── processed/      # reservado para derivados futuros
+│   └── quarantine/     # vendas rejeitadas
+├── docs/
+│   ├── challenge.md
+│   └── dashboard_preview.png
+├── tests/
+├── build_pipeline.py
+├── dashboard.py
+├── export_csv.py
 ├── pipeline.py
-└── requirements.txt
+├── requirements.txt
+└── SECURITY.md
 ```
 
-Arquivos de dados dentro dessas áreas, resultados, temporários e bancos locais não são versionados; arquivos `.gitkeep` preservam somente os diretórios vazios no Git.
+Dados, bancos e resultados são ignorados pelo Git; somente os arquivos `.gitkeep` preservam os diretórios.
 
-## Inspeção segura
+## Entrada e ingestão segura
 
-Execute no PowerShell:
+O pacote original esperado é:
 
-```powershell
-.\.venv\Scripts\python.exe pipeline.py inspect "Teste_Tecnico_Dados_Candidato_20260825.zip"
+```text
+data/incoming/Teste_Tecnico_Dados_Candidato_20260825.zip
 ```
 
-A saída JSON apresenta somente valores calculados na execução: arquivo de origem, schema, encoding, delimitador, cabeçalhos e quantidade de linhas.
+SHA-256 conhecido:
 
-Entradas aceitas:
+```text
+06BE13B4E818849568965B0E3E7BA64F9EDC78BE8D8207C9A088C35773D60DAD
+```
 
-- arquivo `.zip` com ao menos um CSV nos caminhos permitidos em `dados/dimensoes/` ou `dados/vendas/`; o `README.md` de metadados na raiz é opcional;
-- arquivo `.csv` em UTF-8, com ou sem BOM, delimitado por `;` e correspondente a um dos schemas conhecidos;
-- diretório percorrido recursivamente e em ordem determinística, contendo CSVs conhecidos; o `README.md` da raiz e arquivos `.gitkeep` são ignorados.
+A ingestão aceita UTF-8 com ou sem BOM e delimitador `;`. Ela valida os schemas exatos de `consultores`, `lojas`, `veiculos` e `vendas`, preserva todas as colunas recebidas como texto e adiciona `__source_file` e `__source_line` em memória. ZIP Slip, links, junctions, arquivos especiais, colisões de caminhos, conteúdo inesperado, CRC, compressão e limites de tamanho são verificados antes do uso.
 
-O programa rejeita extensões, conteúdo ou schemas inesperados; ZIP inválido, criptografado ou com método de compressão não permitido; caminhos absolutos, UNC, com barra invertida, `.` ou `..`; links simbólicos, junctions do Windows e arquivos especiais; colisões de nomes no Windows; UTF-16/32, UTF-8 inválido, NUL, delimitador divergente e linhas com largura incorreta.
-
-Limites atuais:
-
-- ZIP compactado: 64 MiB;
-- até 32 arquivos no ZIP e até 32 entradas, incluindo diretórios, na entrada por diretório;
-- até 32 MiB por CSV ou membro;
-- até 64 MiB descompactados no ZIP ou somados no diretório;
-- razão máxima de compressão por membro: 200:1.
-
-Códigos de saída: `0` para sucesso, `2` para entrada inválida, `3` para ZIP inválido ou inseguro e `4` para CSV, formato ou schema inválido. Falhas internas não esperadas não são ocultadas.
-
-## Descoberta dos dados fornecidos
-
-O ZIP foi inspecionado por streams, sem extração no repositório. Ele contém 11 arquivos regulares: 10 CSVs e um `README.md` de metadados. Todos os CSVs usam UTF-8 com BOM (`utf-8-sig`), delimitador `;`, cabeçalho na primeira linha e largura consistente. O README interno usa UTF-8 sem BOM.
-
-| Arquivo no ZIP | Extensão | Compactado | Descompactado | Linhas de dados | Finalidade aparente |
-| --- | --- | ---: | ---: | ---: | --- |
-| `dados/dimensoes/dim_consultores.csv` | `.csv` | 693 B | 3.192 B | 64 | Cadastro de consultores e loja/equipe de vínculo. |
-| `dados/dimensoes/dim_lojas.csv` | `.csv` | 158 B | 355 B | 8 | Cadastro de lojas e localização. |
-| `dados/dimensoes/dim_veiculos.csv` | `.csv` | 1.322.991 B | 10.750.182 B | 120.000 | Cadastro e atributos dos veículos. |
-| `dados/vendas/vendas_2024.csv` | `.csv` | 795.927 B | 3.803.892 B | 46.764 | Lote de vendas de 2024. |
-| `dados/vendas/vendas_2025.csv` | `.csv` | 843.382 B | 4.048.589 B | 49.761 | Lote de vendas de 2025. |
-| `dados/vendas/vendas_2026_01.csv` | `.csv` | 58.405 B | 279.063 B | 3.429 | Lote de vendas de janeiro de 2026. |
-| `dados/vendas/vendas_2026_02.csv` | `.csv` | 57.018 B | 273.513 B | 3.358 | Lote de vendas de fevereiro de 2026. |
-| `dados/vendas/vendas_2026_03.csv` | `.csv` | 72.356 B | 347.206 B | 4.270 | Lote de vendas de março de 2026. |
-| `dados/vendas/vendas_2026_04.csv` | `.csv` | 67.745 B | 323.802 B | 3.977 | Lote de vendas de abril de 2026. |
-| `dados/vendas/vendas_2026_05.csv` | `.csv` | 73.163 B | 351.395 B | 4.320 | Lote de vendas de maio de 2026. |
-| `README.md` | `.md` | 417 B | 847 B | 30 linhas | Descrição da estrutura do pacote. |
-
-Total calculado nos CSVs: 235.951 linhas, sendo 120.072 nas dimensões e 115.879 em vendas.
-
-### Schemas encontrados
-
-- **consultores:** `consultor_id`, `consultor`, `loja_id`, `equipe`, `data_admissao`;
-- **lojas:** `loja_id`, `loja`, `cidade`, `uf`, `cluster`;
-- **veículos:** `veiculo_id`, `ano_modelo`, `marca`, `modelo`, `versao`, `carroceria`, `cambio`, `combustivel`, `tipo_veiculo`, `quilometragem`, `cor_externa`, `cor_interna`, `score_avaliacao`;
-- **vendas:** `venda_id`, `data_venda`, `veiculo_id`, `loja_id`, `consultor_id`, `canal_origem`, `forma_pagamento`, `valor_referencia`, `valor_venda`.
-
-### Chaves e relacionamentos aparentes
-
-- `dim_lojas.loja_id`, `dim_consultores.consultor_id` e `dim_veiculos.veiculo_id` são chaves candidatas completas e únicas: 8/8, 64/64 e 120.000/120.000;
-- `vendas.loja_id` aparenta referenciar `dim_lojas.loja_id`;
-- `vendas.consultor_id` aparenta referenciar `dim_consultores.consultor_id`;
-- `vendas.veiculo_id` aparenta referenciar `dim_veiculos.veiculo_id`;
-- `dim_consultores.loja_id` aparenta referenciar `dim_lojas.loja_id`;
-- há 115.705 `venda_id` distintos nas 115.879 linhas de vendas.
-
-Esses relacionamentos ainda não são executados como joins nem aplicados como regras.
-
-### Formatos e valores inesperados observados
-
-- 174 linhas excedentes de venda são duplicatas exatas;
-- há referências órfãs `LOJ999` em 58 linhas, `CON999` em 117 e `VEI9999999` em 58;
-- 71 datas válidas usam formatos alternativos (`YYYY/MM/DD` ou `DD/MM/YYYY`) e 69 datas são semanticamente inválidas;
-- `valor_venda` possui 289 vazios, 35 valores `-5000`, 34 zeros e 44 valores `9999999`;
-- em veículos, há 2.160 versões, 1.080 câmbios, 720 cores internas e 420 scores vazios;
-- `marca` apresenta 28 grafias brutas para 7 marcas aparentes, incluindo variação de caixa, 272 espaços finais e `Leap Motor` versus `Leapmotor`;
-- `quilometragem` possui 116 valores negativos e 124 valores acima de 200 mil;
-- 26.319 vendas têm data anterior à admissão do consultor informado; dois consultores têm admissão posterior à data nominal do pacote;
-- `score_avaliacao`, quando preenchido, usa vírgula decimal.
-
-Esses números são resultados da descoberta, não regras implementadas. A definição de validade, severidade, correção e tratamento pertence a uma fase posterior.
-
-### Comparação com o enunciado
-
-O `README.md` interno do pacote descreve dimensões de apoio e vendas recebidas em lotes, uma organização compatível com o contexto comercial do enunciado. As inconsistências observadas confirmam a advertência do desafio de que os arquivos podem conter problemas de qualidade. Como o enunciado não prescreve regras, chaves ou tratamentos, esta fase adota a interpretação conservadora: valida somente contêiner, encoding, delimitador e schema, preservando todos os valores para análise futura.
-
-## Limitações da Fase 1
-
-Ainda não são executados regras de qualidade, limpeza, normalização, transformação, deduplicação, validação referencial, joins, persistência em DuckDB/Parquet, quarentena, indicadores, gráficos ou interface NiceGUI.
-
-## Ambiente local no Windows
-
-Pré-requisito: Python 3.14.5 disponível pelo comando `python`. No PowerShell, a partir da raiz do repositório:
+Inspeção sem gerar outputs:
 
 ```powershell
+.\.venv\Scripts\python.exe pipeline.py inspect "data\incoming\Teste_Tecnico_Dados_Candidato_20260825.zip"
+```
+
+## Ambiente no Windows
+
+Pré-requisito: Python 3.14.5. Confirme a versão antes de criar o ambiente:
+
+```powershell
+python --version
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install --upgrade pip
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
 ```
 
-Os comandos usam diretamente o Python do ambiente virtual e não dependem da política de execução necessária para ativar scripts no PowerShell.
+Não é necessário ativar a `.venv`; os comandos usam o executável diretamente. Se uma `.venv` existente mostrar outra versão, recrie-a somente após preservar qualquer configuração local necessária.
 
-Verificações do desenvolvimento:
+## Executar o pipeline
 
 ```powershell
-.\.venv\Scripts\python.exe -m ruff check .
-.\.venv\Scripts\python.exe -m ruff format --check .
-.\.venv\Scripts\python.exe -m pytest -q
-.\.venv\Scripts\python.exe -m pip_audit -r requirements.txt
+.\.venv\Scripts\python.exe build_pipeline.py `
+  "data\incoming\Teste_Tecnico_Dados_Candidato_20260825.zip" `
+  --output "data\output" `
+  --quarantine "data\quarantine"
 ```
 
-Os testes usam somente fixtures pequenas e artificiais criadas em diretórios temporários; os dados reais não são copiados para `tests/`.
+Saídas publicadas:
+
+- `data/output/sales_pipeline.duckdb`;
+- `data/output/fact_sales_pipeline.parquet`;
+- `data/output/quality_report.csv`;
+- `data/quarantine/rejected_sales.csv`.
+
+Tabelas DuckDB:
+
+- `raw_vendas`;
+- `dim_consultores`, `dim_lojas`, `dim_veiculos`;
+- `fact_vendas`;
+- `rejected_sales`;
+- `quality_report`;
+- `mart_vendas_mensal`.
+
+Campos monetários da fato e do Parquet usam `DECIMAL(18,2)`; percentuais persistidos usam `DECIMAL(9,4)`. Entradas monetárias com mais de duas casas decimais não são arredondadas silenciosamente: são classificadas como inválidas.
+
+## Regras de qualidade
+
+`error` não implica rejeição automaticamente: duplicatas nas dimensões são reportadas e a primeira ocorrência é usada. Nas vendas, somente regras marcadas com `invalidates_sale=true` enviam a linha à quarentena. `warning` preserva a venda e registra o achado em `quality_issues`.
+
+| Regra | Severidade | Tratamento | Ocorrências na validação da Fase 2A |
+| --- | --- | --- | ---: |
+| `duplicate_consultor_id` | error | manter primeiro cadastro | 0 |
+| `duplicate_loja_id` | error | manter primeiro cadastro | 0 |
+| `duplicate_veiculo_id` | error | manter primeiro cadastro | 0 |
+| `missing_venda_id` | error | rejeitar venda | 0 |
+| `duplicate_venda_id` | error | manter primeira venda e rejeitar posteriores | 174 |
+| `invalid_data_venda` | error | rejeitar venda | 69 |
+| `future_data_venda` | warning | manter com aviso | 0 |
+| `invalid_valor_venda` | error | rejeitar venda | 289 |
+| `negative_valor_venda` | error | rejeitar venda | 35 |
+| `invalid_valor_referencia` | warning | manter com aviso | 0 |
+| `missing_veiculo_id` | error | rejeitar venda | 0 |
+| `orphan_veiculo_id` | error | rejeitar venda | 58 |
+| `missing_loja_id` | error | rejeitar venda | 0 |
+| `orphan_loja_id` | error | rejeitar venda | 58 |
+| `missing_consultor_id` | warning | manter com aviso | 0 |
+| `orphan_consultor_id` | warning | manter com aviso | 117 |
+| `consultor_loja_mismatch` | warning | manter com aviso | 58 |
+| `veiculo_multiple_sales` | warning | manter com aviso | 406 |
+
+O catálogo completo — incluindo descrição, dataset, condição e motivo — está em `build_pipeline.QUALITY_RULES` e é reproduzido no relatório de qualidade.
+
+## Resultado controlado da Fase 2A
+
+Execução em Python 3.14.5, com o ZIP original somente leitura e destinos temporários externos:
+
+| Métrica | Antes do hardening | Depois |
+| --- | ---: | ---: |
+| Vendas recebidas | 115.879 | 115.879 |
+| Vendas válidas | 115.128 | 115.198 |
+| Vendas rejeitadas | 751 | 681 |
+| Datas classificadas como inválidas | 140 | 69 |
+| Faturamento válido | R$ 32.965.765.256,00 | R$ 32.987.527.556,00 |
+| Desconto em valor | R$ 76.800.244,00 | R$ 77.090.644,00 |
+| Ticket médio | R$ 286.340,1193 | R$ 286.355,0370 |
+
+Das 71 datas válidas em formatos alternativos, 70 vendas foram recuperadas; uma delas também falha em outra regra crítica. Datas semanticamente impossíveis continuam rejeitadas.
+
+## Dashboard e exportação
+
+Execute o dashboard atual, preservado em Streamlit:
+
+```powershell
+.\.venv\Scripts\python.exe -m streamlit run dashboard.py
+```
+
+Ele lê `data/output/sales_pipeline.duckdb` em modo somente leitura. Para testes ou outro banco local:
+
+```powershell
+$env:SALES_PIPELINE_DB_PATH = "C:\caminho\sales_pipeline.duckdb"
+.\.venv\Scripts\python.exe -m streamlit run dashboard.py
+```
+
+Uma `fact_vendas` vazia mostra uma mensagem controlada antes de construir o filtro de datas.
+
+Exportação completa da fato para CSV, sem efeitos colaterais no import:
+
+```powershell
+.\.venv\Scripts\python.exe export_csv.py
+```
+
+## Verificações
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest -q
+.\.venv\Scripts\python.exe -m ruff check .
+.\.venv\Scripts\python.exe -m ruff format --check .
+.\.venv\Scripts\python.exe -m pip_audit -r requirements.txt
+git diff --check
+```
+
+Os testes usam somente fixtures artificiais e diretórios temporários. O ZIP e os outputs locais existentes não são usados como alvos destrutivos.
 
 ## Ferramentas de terceiros
 
-Todas as dependências são instaladas localmente por `pip`, nas versões registradas em `requirements.txt`.
-
-| Ferramenta | Uso previsto |
+| Ferramenta | Uso atual |
 | --- | --- |
-| Python | Linguagem e runtime do projeto. |
-| Pandas | Armazenamento textual em memória após parsing e validação estrutural. |
-| DuckDB | Consolidação e consultas analíticas em processo, com arquivo local ignorado pelo Git. |
-| NiceGUI | Interface local futura; não implementada nesta etapa. |
-| Pytest | Testes automatizados. |
+| Python 3.14.5 | Runtime e biblioteca padrão compatível com Windows. |
+| Pandas | Limpeza, normalização, validações, joins e DataFrames. |
+| NumPy | Composição vetorizada de marcações de qualidade. |
+| DuckDB | Persistência e consultas analíticas locais; geração do Parquet e CSV. |
+| Streamlit | Dashboard local existente. |
+| Plotly | Gráficos interativos do dashboard. |
+| NiceGUI | Dependência requerida na fundação; não substitui o dashboard Streamlit herdado nesta fase. |
+| Pytest | Caracterização, regressão e testes funcionais. |
 | Ruff | Lint e verificação de formatação. |
-| pip-audit | Auditoria das dependências Python em busca de vulnerabilidades conhecidas. |
-
-Não há plataforma em nuvem nem serviço hospedado integrado ao projeto. A execução futura será local; uma conexão com a internet pode ser necessária somente para instalar pacotes pelo PyPI e consultar as bases de vulnerabilidades usadas pelo pip-audit.
+| pip-audit | Consulta de vulnerabilidades conhecidas nas dependências. |
 
 ## Uso de inteligência artificial
 
 - **Ferramenta:** OpenAI Codex.
-- **Atividades:** análise do enunciado, fundação, desenho da ingestão segura, testes artificiais e documentação das descobertas.
-- **Verificação:** schemas, contagens e formatos foram recalculados a partir dos arquivos; ZIP Slip, limites, temporários, rastreabilidade e imutabilidade foram cobertos por testes. O responsável pela entrega deve revisar e validar as decisões antes da submissão final.
+- **Uso:** análise do desafio e da auditoria, criação dos testes de caracterização, implementação incremental do hardening, revisão de segurança e atualização documental.
+- **Controles:** mudanças divididas em commits recuperáveis; regras e métricas verificadas por testes e execuções locais; diff revisado antes de cada commit.
+- **Dados:** nenhum arquivo do desafio foi enviado a serviço externo por esta implementação; a análise e os testes ocorreram no workspace local.
 
-## Próximas etapas, fora desta entrega
+Decisões produzidas com IA devem ser revisadas pelo responsável antes da submissão final.
 
-1. definir, justificar e testar regras de qualidade com base nas descobertas;
-2. decidir tratamentos, deduplicação e política de quarentena;
-3. implementar relacionamentos e consolidação;
-4. criar a camada analítica no DuckDB;
-5. implementar a interface local com NiceGUI.
+## Limitações atuais
+
+- O hash físico do arquivo DuckDB pode mudar entre execuções, embora tabelas, contagens, agregações e demais artefatos permaneçam logicamente idempotentes.
+- A publicação restaura os arquivos anteriores em falhas capturadas durante a substituição; encerramento abrupto do processo ou perda de energia entre substituições ainda pode exigir recuperação pelos arquivos `.bak`.
+- Regras como venda anterior à admissão, quilometragem anômala e padronização semântica de marcas foram observadas, mas não foram adicionadas silenciosamente ao catálogo.
+- NiceGUI permanece como dependência original; a interface funcional atual é Streamlit e não foi redesenhada nesta fase.

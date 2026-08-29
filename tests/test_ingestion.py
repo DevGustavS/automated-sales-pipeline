@@ -1,5 +1,3 @@
-"""Tests for safe, read-only ingestion using only artificial fixtures."""
-
 from __future__ import annotations
 
 import codecs
@@ -23,7 +21,9 @@ CONSULTANT_SCHEMA = (
     "equipe",
     "data_admissao",
 )
+
 STORE_SCHEMA = ("loja_id", "loja", "cidade", "uf", "cluster")
+
 SALES_SCHEMA = (
     "venda_id",
     "data_venda",

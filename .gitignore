@@ -59,3 +59,20 @@ temp/
 .DS_Store
 Thumbs.db
 Desktop.ini
+
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Generated data
+data/output/*
+!data/output/.gitkeep
+data/incoming/*
+!data/incoming/.gitkeep
+*.duckdb
+
+# Local artifacts
+*_bundle*.zip
+debug.txt
