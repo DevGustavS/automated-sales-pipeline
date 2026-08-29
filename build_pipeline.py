@@ -16,6 +16,7 @@ import pipeline
 
 NULL_VALUES = {"", "na", "n/a", "null", "none", "nan", "-"}
 MONEY_QUANTUM = Decimal("0.01")
+FIRST_SOURCE_OCCURRENCE = "first"
 TABLE_DECIMAL_COLUMNS = {
     "fact_vendas": {
         "valor_referencia": "DECIMAL(18,2)",
@@ -34,9 +35,14 @@ QUALITY_RULES: tuple[dict[str, object], ...] = (
         "description": "Identificador de consultor duplicado na dimensão.",
         "severity": "error",
         "dataset": "consultores",
-        "condition": "consultor_id aparece mais de uma vez",
-        "treatment": "keep_first_dimension_record",
-        "reason": "Evitar multiplicidade no relacionamento com vendas.",
+        "condition": (
+            "consultor_id aparece mais de uma vez; todas as ocorrências são contadas"
+        ),
+        "treatment": "keep_first_source_occurrence",
+        "reason": (
+            "A primeira ocorrência na ordem consolidada é canônica; as demais não "
+            "entram na dimensão, evitando multiplicidade no relacionamento com vendas."
+        ),
         "invalidates_sale": False,
     },
     {
@@ -44,9 +50,12 @@ QUALITY_RULES: tuple[dict[str, object], ...] = (
         "description": "Identificador de loja duplicado na dimensão.",
         "severity": "error",
         "dataset": "lojas",
-        "condition": "loja_id aparece mais de uma vez",
-        "treatment": "keep_first_dimension_record",
-        "reason": "Evitar multiplicidade no relacionamento com vendas.",
+        "condition": "loja_id aparece mais de uma vez; todas as ocorrências são contadas",
+        "treatment": "keep_first_source_occurrence",
+        "reason": (
+            "A primeira ocorrência na ordem consolidada é canônica; as demais não "
+            "entram na dimensão, evitando multiplicidade no relacionamento com vendas."
+        ),
         "invalidates_sale": False,
     },
     {
@@ -54,9 +63,14 @@ QUALITY_RULES: tuple[dict[str, object], ...] = (
         "description": "Identificador de veículo duplicado na dimensão.",
         "severity": "error",
         "dataset": "veiculos",
-        "condition": "veiculo_id aparece mais de uma vez",
-        "treatment": "keep_first_dimension_record",
-        "reason": "Evitar multiplicidade no relacionamento com vendas.",
+        "condition": (
+            "veiculo_id aparece mais de uma vez; todas as ocorrências são contadas"
+        ),
+        "treatment": "keep_first_source_occurrence",
+        "reason": (
+            "A primeira ocorrência na ordem consolidada é canônica; as demais não "
+            "entram na dimensão, evitando multiplicidade no relacionamento com vendas."
+        ),
         "invalidates_sale": False,
     },
     {
@@ -74,9 +88,12 @@ QUALITY_RULES: tuple[dict[str, object], ...] = (
         "description": "Identificador de venda repetido.",
         "severity": "error",
         "dataset": "vendas",
-        "condition": "venda_id repete uma ocorrência anterior",
-        "treatment": "reject_later_sale",
-        "reason": "Evitar contagem duplicada mantendo a primeira ocorrência.",
+        "condition": "venda_id repete uma ocorrência anterior na ordem consolidada",
+        "treatment": "keep_first_and_reject_later_source_occurrences",
+        "reason": (
+            "A primeira ocorrência na ordem consolidada é canônica; ocorrências "
+            "posteriores são rejeitadas para evitar contagem duplicada."
+        ),
         "invalidates_sale": True,
     },
     {
@@ -359,20 +376,26 @@ def validate(
     report: list[dict[str, object]] = []
 
     # Cada dataset possui colunas de rastreabilidade com os mesmos nomes.
-    # Renomeá-las evita colisões durante os joins e preserverva a origem.
-    consultores_dim = consultores.drop_duplicates("consultor_id", keep="first").rename(
+    # Renomeá-las evita colisões durante os joins e preserva a origem.
+    # A ingestão ordena arquivos pelo nome e preserva a ordem das linhas. Portanto,
+    # "first" é a primeira ocorrência determinística nessa ordem consolidada.
+    consultores_dim = consultores.drop_duplicates(
+        "consultor_id", keep=FIRST_SOURCE_OCCURRENCE
+    ).rename(
         columns={
             "__source_file": "consultor_source_file",
             "__source_line": "consultor_source_line",
         }
     )
-    lojas_dim = lojas.drop_duplicates("loja_id", keep="first").rename(
+    lojas_dim = lojas.drop_duplicates("loja_id", keep=FIRST_SOURCE_OCCURRENCE).rename(
         columns={
             "__source_file": "loja_source_file",
             "__source_line": "loja_source_line",
         }
     )
-    veiculos_dim = veiculos.drop_duplicates("veiculo_id", keep="first").rename(
+    veiculos_dim = veiculos.drop_duplicates(
+        "veiculo_id", keep=FIRST_SOURCE_OCCURRENCE
+    ).rename(
         columns={
             "__source_file": "veiculo_source_file",
             "__source_line": "veiculo_source_line",
@@ -399,7 +422,8 @@ def validate(
         ("missing_venda_id", vendas["venda_id"].isna()),
         (
             "duplicate_venda_id",
-            vendas["venda_id"].notna() & vendas["venda_id"].duplicated(keep="first"),
+            vendas["venda_id"].notna()
+            & vendas["venda_id"].duplicated(keep=FIRST_SOURCE_OCCURRENCE),
         ),
         ("invalid_data_venda", vendas["data_venda"].isna()),
         (

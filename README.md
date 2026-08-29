@@ -124,7 +124,24 @@ Campos monetários da fato e do Parquet usam `DECIMAL(18,2)`; percentuais persis
 
 ## Regras de qualidade
 
-`error` não implica rejeição automaticamente: duplicatas nas dimensões são reportadas e a primeira ocorrência é usada. Nas vendas, somente regras marcadas com `invalidates_sale=true` enviam a linha à quarentena. `warning` preserva a venda e registra o achado em `quality_issues`.
+O catálogo possui 18 regras: 12 `error` e 6 `warning`. Cada entrada de
+`build_pipeline.QUALITY_RULES` declara `rule_id`, descrição, dataset, severidade,
+condição, tratamento, justificativa e se invalida uma venda. Esses mesmos campos
+compõem o `quality_report`.
+
+- Em `vendas`, `error` significa que a linha não é confiável para a fato. A regra
+  marca `invalidates_sale=true`, registra o `rule_id` em `quality_issues` e envia a
+  linha à quarentena.
+- Em dimensões, `error` qualifica as ocorrências duplicadas da origem. Elas não são
+  carregadas em conjunto: somente a ocorrência canônica segue para os joins, sem
+  invalidar automaticamente vendas que apontam para esse ID.
+- `warning` registra uma anomalia relevante em `quality_issues`, mas preserva a
+  venda na fato. Não há correção automática do valor suspeito.
+
+As regras são avaliadas de forma independente sobre os dados normalizados. Assim,
+uma linha pode conter vários `rule_id` separados por `|`, e o `failed_rows` de cada
+regra inclui todas as linhas afetadas, mesmo quando elas também são rejeitadas por
+outra regra.
 
 | Regra | Severidade | Tratamento | Ocorrências na validação da Fase 2A |
 | --- | --- | --- | ---: |
@@ -147,7 +164,48 @@ Campos monetários da fato e do Parquet usam `DECIMAL(18,2)`; percentuais persis
 | `consultor_loja_mismatch` | warning | manter com aviso | 58 |
 | `veiculo_multiple_sales` | warning | manter com aviso | 406 |
 
-O catálogo completo — incluindo descrição, dataset, condição e motivo — está em `build_pipeline.QUALITY_RULES` e é reproduzido no relatório de qualidade.
+### Política de duplicatas
+
+A ordem consolidada é determinística: os arquivos ingeridos são ordenados pelo
+nome de origem, e a ordem das linhas de cada CSV é preservada. A primeira
+ocorrência nessa sequência é a ocorrência canônica.
+
+| Chave | Ocorrência canônica | Demais ocorrências | Contagem no relatório |
+| --- | --- | --- | --- |
+| `venda_id` | permanece candidata à fato | rejeitadas como `duplicate_venda_id` | somente ocorrências posteriores |
+| `consultor_id` | compõe `dim_consultores` | não entram na dimensão | todas as ocorrências do ID duplicado |
+| `loja_id` | compõe `dim_lojas` | não entram na dimensão | todas as ocorrências do ID duplicado |
+| `veiculo_id` | compõe `dim_veiculos` | não entram na dimensão | todas as ocorrências do ID duplicado |
+
+As regras continuam independentes: a ocorrência canônica de uma venda ainda pode
+ser rejeitada se falhar em outro `error`.
+
+### Integridade referencial e quarentena
+
+| Relação | Falha | Decisão | Fato e relatório |
+| --- | --- | --- | --- |
+| venda → veículo | ID ausente ou órfão | `error` | rejeita; registra a regra no `quality_report` e em `quality_issues` |
+| venda → loja | ID ausente ou órfão | `error` | rejeita; registra a regra no `quality_report` e em `quality_issues` |
+| venda → consultor | ID ausente ou órfão | `warning` | mantém a venda; atributos não resolvidos ficam nulos e a regra é registrada |
+| consultor → loja da venda | lojas divergentes para consultor conhecido | `warning` | mantém a venda como possível operação cruzada e registra `consultor_loja_mismatch` |
+
+`data/quarantine/rejected_sales.csv` recebe a linha quando ao menos um `error` de
+`vendas` a invalida. Duplicatas de dimensão aparecem no relatório, mas não enviam
+por si sós uma venda à quarentena.
+
+### Limitações das regras
+
+- `veiculo_multiple_sales` não prova duplicidade nem fraude; pode representar
+  revenda ou recorrência e, sem contexto adicional, permanece `warning`.
+- `consultor_loja_mismatch` pode representar venda cruzada legítima; não há base de
+  negócio para rejeitar ou corrigir a loja.
+- Uma venda com consultor ausente ou órfão ainda conserva veículo, loja e valor;
+  por isso permanece utilizável com `warning`.
+- O vínculo `consultor → loja` não possui uma regra independente para loja ausente
+  no cadastro do consultor. O catálogo atual somente compara a loja conhecida do
+  consultor com a loja da venda; ampliar essa política exige requisito de negócio.
+- A seleção canônica de duplicatas não tenta reconciliar campos conflitantes: ela
+  preserva a primeira ocorrência rastreável e expõe todas as duplicatas no relatório.
 
 ## Resultado controlado da Fase 2A
 

@@ -138,6 +138,29 @@ def test_quality_catalog_is_complete_unique_and_exposed_in_report() -> None:
         "error",
         "warning",
     }
+    assert (
+        sum(rule["severity"] == "error" for rule in build_pipeline.QUALITY_RULES) == 12
+    )
+    assert (
+        sum(rule["severity"] == "warning" for rule in build_pipeline.QUALITY_RULES) == 6
+    )
+    assert all(
+        isinstance(rule[field], str) and rule[field].strip()
+        for rule in build_pipeline.QUALITY_RULES
+        for field in required_fields - {"invalidates_sale"}
+    )
+
+    sales_rules = [
+        rule for rule in build_pipeline.QUALITY_RULES if rule["dataset"] == "vendas"
+    ]
+    dimension_rules = [
+        rule for rule in build_pipeline.QUALITY_RULES if rule["dataset"] != "vendas"
+    ]
+    assert all(
+        rule["invalidates_sale"] == (rule["severity"] == "error")
+        for rule in sales_rules
+    )
+    assert all(not rule["invalidates_sale"] for rule in dimension_rules)
 
     _, _, report = _normalize_and_validate([_sale("S1")])
     assert set(report["rule_id"]) == set(rule_ids)
@@ -146,6 +169,111 @@ def test_quality_catalog_is_complete_unique_and_exposed_in_report() -> None:
         row = report.loc[report["rule_id"].eq(rule["rule_id"])].iloc[0]
         for field in required_fields - {"rule_id"}:
             assert row[field] == rule[field]
+
+
+@pytest.mark.parametrize(
+    ("rule_id", "sales"),
+    [
+        pytest.param("missing_venda_id", [_sale(None)], id="missing-sale-id"),
+        pytest.param(
+            "duplicate_venda_id",
+            [_sale("S1"), _sale("S1", amount="80.00")],
+            id="duplicate-sale-id",
+        ),
+        pytest.param(
+            "invalid_data_venda", [_sale("S1", date="invalid")], id="invalid-date"
+        ),
+        pytest.param(
+            "invalid_valor_venda", [_sale("S1", amount="invalid")], id="invalid-amount"
+        ),
+        pytest.param(
+            "negative_valor_venda", [_sale("S1", amount="-1.00")], id="negative-amount"
+        ),
+        pytest.param(
+            "missing_veiculo_id", [_sale("S1", vehicle_id=None)], id="missing-vehicle"
+        ),
+        pytest.param(
+            "orphan_veiculo_id", [_sale("S1", vehicle_id="V404")], id="orphan-vehicle"
+        ),
+        pytest.param(
+            "missing_loja_id", [_sale("S1", store_id=None)], id="missing-store"
+        ),
+        pytest.param(
+            "orphan_loja_id", [_sale("S1", store_id="L404")], id="orphan-store"
+        ),
+    ],
+)
+def test_sales_error_rules_reject_records(
+    rule_id: str, sales: list[dict[str, object]]
+) -> None:
+    fact, rejected, report = _normalize_and_validate(sales)
+
+    assert len(rejected) == 1
+    assert rejected["quality_issues"].str.contains(rule_id, regex=False).any()
+    row = report.loc[report["rule_id"].eq(rule_id)].iloc[0]
+    assert row["failed_rows"] == 1
+    assert row["severity"] == "error"
+    assert row["invalidates_sale"]
+    assert row["status"] == "failed"
+    assert len(fact) == len(sales) - 1
+
+
+@pytest.mark.parametrize(
+    ("rule_id", "sales", "expected_count"),
+    [
+        pytest.param(
+            "future_data_venda", [_sale("S1", date="2099-01-01")], 1, id="future-date"
+        ),
+        pytest.param(
+            "invalid_valor_referencia",
+            [_sale("S1", reference="invalid")],
+            1,
+            id="invalid-reference",
+        ),
+        pytest.param(
+            "missing_consultor_id",
+            [_sale("S1", consultant_id=None)],
+            1,
+            id="missing-consultant",
+        ),
+        pytest.param(
+            "orphan_consultor_id",
+            [_sale("S1", consultant_id="C404")],
+            1,
+            id="orphan-consultant",
+        ),
+        pytest.param(
+            "consultor_loja_mismatch",
+            [_sale("S1", consultant_id="C2", store_id="L1")],
+            1,
+            id="consultant-store-mismatch",
+        ),
+        pytest.param(
+            "veiculo_multiple_sales",
+            [_sale("S1"), _sale("S2")],
+            2,
+            id="vehicle-multiple-sales",
+        ),
+    ],
+)
+def test_warning_rules_retain_sales(
+    rule_id: str,
+    sales: list[dict[str, object]],
+    expected_count: int,
+) -> None:
+    fact, rejected, report = _normalize_and_validate(sales)
+
+    assert rejected.empty
+    assert len(fact) == len(sales)
+    assert (
+        fact["quality_issues"].str.contains(rule_id, regex=False).sum()
+        == expected_count
+    )
+    row = report.loc[report["rule_id"].eq(rule_id)].iloc[0]
+    assert row["failed_rows"] == expected_count
+    assert row["severity"] == "warning"
+    assert not row["invalidates_sale"]
+    assert row["status"] == "warning"
 
 
 def test_date_parser_accepts_known_formats_and_rejects_invalid_dates() -> None:
@@ -180,39 +308,49 @@ def test_money_parser_rejects_non_cent_precision() -> None:
 
 
 def test_duplicate_sale_is_rejected_and_reused_vehicle_is_a_warning() -> None:
-    fact, rejected, report = _normalize_and_validate([_sale("S1"), _sale("S1")])
+    fact, rejected, report = _normalize_and_validate(
+        [_sale("S1", amount="90.00"), _sale("S1", amount="80.00")]
+    )
 
     assert fact["venda_id"].tolist() == ["S1"]
+    assert fact["valor_venda"].tolist() == [Decimal("90.00")]
     assert rejected["venda_id"].tolist() == ["S1"]
+    assert rejected["valor_venda"].tolist() == [Decimal("80.00")]
+    assert rejected["__source_line"].tolist() == [3]
     assert _report_count(report, "duplicate_venda_id") == 1
     assert _report_count(report, "veiculo_multiple_sales") == 2
     assert "veiculo_multiple_sales" in fact.iloc[0]["quality_issues"]
     assert "duplicate_venda_id" in rejected.iloc[0]["quality_issues"]
 
 
-def test_duplicate_dimension_is_reported_and_first_record_is_used() -> None:
-    stores = [
-        {
-            "loja_id": "L1",
-            "loja": "Primeira",
-            "cidade": "Manaus",
-            "uf": "AM",
-            "cluster": "A",
-        },
-        {
-            "loja_id": "L1",
-            "loja": "Segunda",
-            "cidade": "Manaus",
-            "uf": "AM",
-            "cluster": "B",
-        },
-    ]
+@pytest.mark.parametrize(
+    ("dimension", "display_field", "rule_id"),
+    [
+        ("consultants", "consultor", "duplicate_consultor_id"),
+        ("stores", "loja", "duplicate_loja_id"),
+        ("vehicles", "modelo", "duplicate_veiculo_id"),
+    ],
+)
+def test_duplicate_dimension_is_reported_and_first_source_occurrence_is_used(
+    dimension: str, display_field: str, rule_id: str
+) -> None:
+    default_frames = _raw_frames([_sale("unused")])
+    dimension_index = {"consultants": 1, "stores": 2, "vehicles": 3}[dimension]
+    records = default_frames[dimension_index].drop(columns=list(pipeline.TRACE_COLUMNS))
+    dimension_rows = records.to_dict(orient="records")
+    duplicate = dimension_rows[0].copy()
+    dimension_rows[0][display_field] = "Primeira ocorrência"
+    duplicate[display_field] = "Segunda ocorrência"
+    dimension_rows.insert(1, duplicate)
 
-    fact, rejected, report = _normalize_and_validate([_sale("S1")], stores=stores)
+    fact, rejected, report = _normalize_and_validate(
+        [_sale("S1")], **{dimension: dimension_rows}
+    )
 
     assert rejected.empty
-    assert fact.iloc[0]["loja"] == "Primeira"
-    assert _report_count(report, "duplicate_loja_id") == 2
+    assert fact.iloc[0][display_field] == "Primeira ocorrência"
+    assert _report_count(report, rule_id) == 2
+    assert rule_id not in fact.iloc[0]["quality_issues"]
 
 
 def test_reference_errors_reject_and_consultant_warnings_do_not() -> None:
