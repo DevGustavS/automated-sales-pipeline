@@ -1,0 +1,9 @@
+# Runtime e componentes previstos
+pandas==3.0.5
+duckdb==1.5.5
+nicegui==3.16.0
+
+# Qualidade, testes e segurança
+pytest==9.1.1
+ruff==0.16.5
+pip-audit==2.10.1

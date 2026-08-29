@@ -1,0 +1,61 @@
+# Ambientes virtuais e configuração local
+.venv/
+venv/
+env/
+ENV/
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# Ferramentas de qualidade e cobertura
+.pytest_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# Dados e artefatos locais; preserve apenas os diretórios
+data/incoming/*
+!data/incoming/.gitkeep
+data/processed/*
+!data/processed/.gitkeep
+data/quarantine/*
+!data/quarantine/.gitkeep
+output/*
+!output/.gitkeep
+
+# Bancos locais
+*.duckdb
+*.duckdb.wal
+*.db
+*.db-*
+*.sqlite
+*.sqlite3
+
+# Temporários e logs
+*.tmp
+*.temp
+*.bak
+*.swp
+*.swo
+*.log
+~$*
+.cache/
+tmp/
+temp/
+
+# Editores e sistema operacional
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+Desktop.ini
