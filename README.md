@@ -44,12 +44,11 @@ Os artefatos são gerados primeiro em diretórios temporários no mesmo volume. 
 ├── data/
 │   ├── incoming/       # entrada original local e imutável
 │   ├── output/         # banco, Parquet e relatório gerados
-│   ├── processed/      # reservado para derivados futuros
 │   └── quarantine/     # vendas rejeitadas
 ├── docs/
-│   ├── challenge.md
-│   └── dashboard_preview.png
+│   └── challenge.md
 ├── tests/
+├── app.py
 ├── build_pipeline.py
 ├── dashboard.py
 ├── export_csv.py
@@ -103,6 +102,16 @@ Não é necessário ativar a `.venv`; os comandos usam o executável diretamente
   --output "data\output" `
   --quarantine "data\quarantine"
 ```
+
+O launcher executa o mesmo pipeline e abre o dashboard após uma execução bem-sucedida:
+
+```powershell
+.\.venv\Scripts\python.exe app.py --zip "Teste_Tecnico_Dados_Candidato_20260825.zip"
+```
+
+Sem `--zip`, a seleção é automática somente quando existe exatamente um ZIP em
+`data/incoming/`. Com vários ZIPs, informe o arquivo explicitamente; use
+`.\.venv\Scripts\python.exe app.py --list` para listar as opções.
 
 Saídas publicadas:
 
@@ -294,6 +303,9 @@ Ele lê `data/output/sales_pipeline.duckdb` em modo somente leitura. Para testes
 $env:SALES_PIPELINE_DB_PATH = "C:\caminho\sales_pipeline.duckdb"
 .\.venv\Scripts\python.exe -m streamlit run dashboard.py
 ```
+
+O modo claro permanece como padrão; use o toggle `🌙 Modo escuro`, no topo da
+sidebar, para alternar o tema sem modificar filtros, KPIs ou dados.
 
 Uma `fact_vendas` vazia mostra uma mensagem controlada antes de construir o filtro de datas.
 O quarto card apresenta **Desconto concedido** — aproximadamente R$ 751,5 milhões

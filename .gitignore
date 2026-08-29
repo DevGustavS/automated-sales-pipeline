@@ -26,8 +26,6 @@ htmlcov/
 # Dados e artefatos locais; preserve apenas os diretórios
 data/incoming/*
 !data/incoming/.gitkeep
-data/processed/*
-!data/processed/.gitkeep
 data/quarantine/*
 !data/quarantine/.gitkeep
 output/*

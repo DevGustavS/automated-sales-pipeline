@@ -126,3 +126,78 @@ def test_dashboard_displays_discount_without_offsetting_reference_premium(
     assert "Arquivo de origem" in traceability_table
     assert "Linha de origem" in traceability_table
     assert "Alertas de qualidade" in traceability_table
+
+
+def test_dashboard_toggles_theme_without_changing_kpis_or_tables(
+    tmp_path: Path, monkeypatch
+) -> None:
+    database = tmp_path / "analytical.duckdb"
+    _create_analytical_database(database)
+    monkeypatch.setenv("SALES_PIPELINE_DB_PATH", str(database))
+
+    dashboard = Path(__file__).parents[1] / "dashboard.py"
+    app = AppTest.from_file(str(dashboard), default_timeout=15).run()
+
+    assert not app.exception
+    assert app.toggle[0].label == "🌙 Modo escuro"
+    assert app.toggle[0].value is False
+    light_css = next(
+        markdown.value
+        for markdown in app.markdown
+        if "--background-color:" in markdown.value
+    )
+    light_kpis = next(
+        markdown.value
+        for markdown in app.markdown
+        if '<div class="kpi-grid">' in markdown.value
+    )
+    light_tables = [dataframe.value.copy() for dataframe in app.dataframe]
+    assert "#F7F8FA" in light_css
+    light_download_css = light_css.split(
+        '[data-testid="stDownloadButton"] button {', maxsplit=1
+    )[1].split("}", maxsplit=1)[0]
+    assert "background-color: #FFFFFF !important;" in light_download_css
+    assert "color: #2C2C2B !important;" in light_download_css
+
+    app.toggle[0].set_value(True).run()
+
+    assert not app.exception
+    assert app.toggle[0].value is True
+    dark_css = next(
+        markdown.value
+        for markdown in app.markdown
+        if "--background-color:" in markdown.value
+    )
+    dark_kpis = next(
+        markdown.value
+        for markdown in app.markdown
+        if '<div class="kpi-grid">' in markdown.value
+    )
+    assert "#0E1117" in dark_css
+    dark_download_css = dark_css.split(
+        '[data-testid="stDownloadButton"] button {', maxsplit=1
+    )[1].split("}", maxsplit=1)[0]
+    assert "background-color: #161B22 !important;" in dark_download_css
+    assert "color: #F0F2F6 !important;" in dark_download_css
+    assert dark_kpis == light_kpis
+    for dark_table, light_table in zip(
+        [dataframe.value for dataframe in app.dataframe], light_tables, strict=True
+    ):
+        assert dark_table.equals(light_table)
+
+    app.toggle[0].set_value(False).run()
+
+    assert not app.exception
+    assert app.toggle[0].value is False
+    restored_css = next(
+        markdown.value
+        for markdown in app.markdown
+        if "--background-color:" in markdown.value
+    )
+    restored_kpis = next(
+        markdown.value
+        for markdown in app.markdown
+        if '<div class="kpi-grid">' in markdown.value
+    )
+    assert "#F7F8FA" in restored_css
+    assert restored_kpis == light_kpis

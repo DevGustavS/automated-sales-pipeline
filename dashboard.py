@@ -20,12 +20,41 @@ COLORS = {
     "green": "#46A171",
     "orange": "#D5803B",
     "red": "#E56458",
-    "text": "#2C2C2B",
-    "muted": "#7D7A75",
-    "border": "#E6E5E3",
-    "surface": "#FFFFFF",
 }
 PALETTE = ["#5E9FE8", "#EAC26B", "#72BC8F", "#BF8EDA", "#DE9255", "#DF84A8"]
+
+THEMES = {
+    "light": {
+        "app": "#F7F8FA",
+        "surface": "#FFFFFF",
+        "text": "#2C2C2B",
+        "muted": "#7D7A75",
+        "border": "#E6E5E3",
+        "grid": "#EFEFED",
+        "shadow": "rgba(0, 0, 0, .03)",
+        "hover_bg": "#202020",
+        "hover_text": "#FFFFFF",
+        "quality_bg": "#E8F1EC",
+        "quality_text": "#2E6849",
+        "quality_border": "#CDE3D6",
+        "dataframe_filter": "none",
+    },
+    "dark": {
+        "app": "#0E1117",
+        "surface": "#161B22",
+        "text": "#F0F2F6",
+        "muted": "#A8B0BC",
+        "border": "#30363D",
+        "grid": "#30363D",
+        "shadow": "rgba(0, 0, 0, .24)",
+        "hover_bg": "#F0F2F6",
+        "hover_text": "#0E1117",
+        "quality_bg": "#17271F",
+        "quality_text": "#8BD5A8",
+        "quality_border": "#2F6848",
+        "dataframe_filter": "invert(.9) hue-rotate(180deg)",
+    },
+}
 
 st.set_page_config(
     page_title="Sales Performance",
@@ -34,53 +63,144 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
+dark_mode = st.sidebar.toggle("🌙 Modo escuro", value=False)
+THEME = THEMES["dark" if dark_mode else "light"]
+
 st.markdown(
-    """
+    f"""
     <style>
-    .stApp { background: #F7F8FA; color: #2C2C2B; }
-    .block-container {
+    .stApp {{
+        background: {THEME["app"]};
+        color: {THEME["text"]};
+        --background-color: {THEME["app"]};
+        --secondary-background-color: {THEME["surface"]};
+        --text-color: {THEME["text"]};
+    }}
+    .block-container {{
         max-width: 1440px;
         padding-top: 4.25rem !important;
         padding-bottom: 3rem;
-    }
-    [data-testid="stSidebar"] { background: #FFFFFF; border-right: 1px solid #E6E5E3; }
-    .kpi-grid {
+    }}
+    [data-testid="stSidebar"] {{
+        background: {THEME["surface"]};
+        border-right: 1px solid {THEME["border"]};
+    }}
+    [data-testid="stHeader"] {{ background: {THEME["app"]}; }}
+    [data-testid="stSidebar"] p,
+    [data-testid="stSidebar"] label,
+    [data-testid="stSidebar"] [data-testid="stMarkdownContainer"],
+    [data-testid="stCaptionContainer"] {{ color: {THEME["muted"]}; }}
+    [data-testid="stSidebar"] [data-baseweb="select"] > div,
+    [data-testid="stSidebar"] [data-baseweb="input"] > div {{
+        background-color: {THEME["surface"]};
+        color: {THEME["text"]};
+        border-color: {THEME["border"]};
+    }}
+    [data-testid="stMultiSelect"] [role="group"],
+    [data-testid="stDateInputField"] {{
+        background-color: {THEME["surface"]};
+        color: {THEME["text"]};
+        border-color: {THEME["border"]};
+    }}
+    [data-testid="stMultiSelect"] input,
+    [data-testid="stDateInputField"] [role="spinbutton"] {{
+        color: {THEME["text"]};
+    }}
+    [data-testid="stMultiSelect"] input::placeholder {{
+        color: {THEME["muted"]};
+        opacity: 1;
+    }}
+    .kpi-grid {{
         display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
         gap: 12px; margin: 0 0 18px;
-    }
-    .kpi-card {
-        min-width: 0; background: #FFFFFF; border: 1px solid #E6E5E3;
+    }}
+    .kpi-card {{
+        min-width: 0; background: {THEME["surface"]}; border: 1px solid {THEME["border"]};
         border-radius: 12px; padding: 17px 18px;
-        box-shadow: 0 1px 2px rgba(0,0,0,.03);
-    }
-    .kpi-label {
-        color: #7D7A75; font-size: .78rem; font-weight: 700;
+        box-shadow: 0 1px 2px {THEME["shadow"]};
+    }}
+    .kpi-label {{
+        color: {THEME["muted"]}; font-size: .78rem; font-weight: 700;
         letter-spacing: .01em; margin-bottom: 7px;
-    }
-    .kpi-value {
-        color: #2C2C2B; font-size: clamp(1.25rem, 1.75vw, 1.65rem);
+    }}
+    .kpi-value {{
+        color: {THEME["text"]}; font-size: clamp(1.25rem, 1.75vw, 1.65rem);
         line-height: 1.15; font-weight: 760; white-space: nowrap;
-    }
-    [data-testid="stPlotlyChart"] {
-        background: #FFFFFF; border: 1px solid #E6E5E3; border-radius: 12px;
-        padding: 8px; box-shadow: 0 1px 2px rgba(0,0,0,.03);
-    }
-    .dashboard-kicker {
+    }}
+    [data-testid="stPlotlyChart"] {{
+        background: {THEME["surface"]}; border: 1px solid {THEME["border"]}; border-radius: 12px;
+        padding: 8px; box-shadow: 0 1px 2px {THEME["shadow"]};
+    }}
+    .dashboard-kicker {{
         display: block; min-height: 24px; padding-top: 2px;
         color: #2783DE; font-size: .82rem; line-height: 1.45;
         font-weight: 750; letter-spacing: .08em; text-transform: uppercase;
-    }
-    .dashboard-title { font-size: 2rem; font-weight: 760; margin: .2rem 0 0; color: #2C2C2B; }
-    .dashboard-subtitle { color: #7D7A75; margin: .35rem 0 1.4rem; }
-    .section-title { font-size: 1.05rem; font-weight: 700; margin: 1.25rem 0 .65rem; color: #2C2C2B; }
-    .quality-note { background: #E8F1EC; color: #2E6849; border: 1px solid #CDE3D6; border-radius: 10px; padding: 12px 14px; }
-    div[data-baseweb="tab-list"] { gap: 10px; }
-    button[data-baseweb="tab"] { border-radius: 8px; padding-left: 16px; padding-right: 16px; }
-    @media (max-width: 760px) {
-        .block-container { padding-left: 1rem; padding-right: 1rem; }
-        .kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-        .kpi-value { font-size: 1.2rem; }
-    }
+    }}
+    .dashboard-title {{ font-size: 2rem; font-weight: 760; margin: .2rem 0 0; color: {THEME["text"]}; }}
+    .dashboard-subtitle {{ color: {THEME["muted"]}; margin: .35rem 0 1.4rem; }}
+    .section-title {{ font-size: 1.05rem; font-weight: 700; margin: 1.25rem 0 .65rem; color: {THEME["text"]}; }}
+    .quality-note {{
+        background: {THEME["quality_bg"]}; color: {THEME["quality_text"]};
+        border: 1px solid {THEME["quality_border"]}; border-radius: 10px; padding: 12px 14px;
+    }}
+    div[data-baseweb="tab-list"] {{ gap: 10px; border-bottom-color: {THEME["border"]}; }}
+    [data-testid="stTab"] {{
+        border-radius: 8px; padding-left: 16px; padding-right: 16px;
+        color: {THEME["muted"]};
+    }}
+    [data-testid="stTab"] p {{ color: inherit; }}
+    [data-testid="stTab"][aria-selected="true"] {{ color: #2783DE; }}
+    [data-testid="stDataFrame"],
+    [data-testid="stDataFrameResizable"] {{
+        background: {THEME["surface"]};
+        border-color: {THEME["border"]};
+        color: {THEME["text"]};
+    }}
+    [data-testid="stDataFrame"] .stDataFrameGlideDataEditor {{
+        --gdg-text-dark: {THEME["text"]} !important;
+        --gdg-text-medium: {THEME["muted"]} !important;
+        --gdg-text-light: {THEME["muted"]} !important;
+        --gdg-text-bubble: {THEME["muted"]} !important;
+        --gdg-bg-icon-header: {THEME["muted"]} !important;
+        --gdg-fg-icon-header: {THEME["surface"]} !important;
+        --gdg-text-header: {THEME["muted"]} !important;
+        --gdg-text-group-header: {THEME["muted"]} !important;
+        --gdg-bg-group-header: {THEME["surface"]} !important;
+        --gdg-bg-group-header-hovered: {THEME["border"]} !important;
+        --gdg-bg-cell: {THEME["app"]} !important;
+        --gdg-bg-cell-medium: {THEME["app"]} !important;
+        --gdg-bg-header: {THEME["surface"]} !important;
+        --gdg-bg-header-has-focus: {THEME["border"]} !important;
+        --gdg-bg-header-hovered: {THEME["border"]} !important;
+        --gdg-bg-bubble: {THEME["surface"]} !important;
+        --gdg-bg-bubble-selected: {THEME["border"]} !important;
+        --gdg-border-color: {THEME["border"]} !important;
+        --gdg-horizontal-border-color: {THEME["border"]} !important;
+        --gdg-link-color: #2783DE !important;
+    }}
+    [data-testid="stDataFrame"] canvas {{
+        filter: {THEME["dataframe_filter"]};
+    }}
+    [data-testid="stDownloadButton"] button {{
+        background-color: {THEME["surface"]} !important;
+        color: {THEME["text"]} !important;
+        border: 1px solid {THEME["border"]} !important;
+    }}
+    [data-testid="stDownloadButton"] button p {{ color: inherit; }}
+    [data-testid="stDownloadButton"] button:hover {{
+        background-color: {THEME["app"]} !important;
+        color: #2783DE !important;
+        border-color: #2783DE !important;
+    }}
+    [data-testid="stDownloadButton"] button:focus-visible {{
+        outline: 2px solid #2783DE;
+        outline-offset: 2px;
+    }}
+    @media (max-width: 760px) {{
+        .block-container {{ padding-left: 1rem; padding-right: 1rem; }}
+        .kpi-grid {{ grid-template-columns: repeat(2, minmax(0, 1fr)); }}
+        .kpi-value {{ font-size: 1.2rem; }}
+    }}
     </style>
     """,
     unsafe_allow_html=True,
@@ -120,11 +240,14 @@ def style_figure(fig: go.Figure, height: int = 360) -> go.Figure:
     fig.update_layout(
         height=height,
         margin={"l": 22, "r": 22, "t": 48, "b": 24},
-        paper_bgcolor="#FFFFFF",
-        plot_bgcolor="#FFFFFF",
-        font={"family": "Arial, sans-serif", "color": COLORS["text"], "size": 13},
-        title_font={"size": 16, "color": COLORS["text"]},
-        hoverlabel={"bgcolor": "#202020", "font_color": "#FFFFFF"},
+        paper_bgcolor=THEME["surface"],
+        plot_bgcolor=THEME["surface"],
+        font={"family": "Arial, sans-serif", "color": THEME["text"], "size": 13},
+        title_font={"size": 16, "color": THEME["text"]},
+        hoverlabel={
+            "bgcolor": THEME["hover_bg"],
+            "font_color": THEME["hover_text"],
+        },
         legend={
             "orientation": "h",
             "yanchor": "bottom",
@@ -132,8 +255,8 @@ def style_figure(fig: go.Figure, height: int = 360) -> go.Figure:
             "xanchor": "right",
             "x": 1,
         },
-        xaxis={"showgrid": False, "linecolor": COLORS["border"]},
-        yaxis={"gridcolor": "#EFEFED", "griddash": "dot", "zeroline": False},
+        xaxis={"showgrid": False, "linecolor": THEME["border"]},
+        yaxis={"gridcolor": THEME["grid"], "griddash": "dot", "zeroline": False},
     )
     return fig
 
@@ -292,7 +415,7 @@ with overview_tab:
             },
             marker={
                 "size": 7,
-                "color": "#FFFFFF",
+                "color": THEME["surface"],
                 "line": {"color": COLORS["blue"], "width": 2},
             },
             fill="tozeroy",
