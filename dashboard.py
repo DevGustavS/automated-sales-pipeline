@@ -61,7 +61,6 @@ st.markdown(
         color: #2C2C2B; font-size: clamp(1.25rem, 1.75vw, 1.65rem);
         line-height: 1.15; font-weight: 760; white-space: nowrap;
     }
-    .kpi-value.positive { color: #46A171; }
     [data-testid="stPlotlyChart"] {
         background: #FFFFFF; border: 1px solid #E6E5E3; border-radius: 12px;
         padding: 8px; box-shadow: 0 1px 2px rgba(0,0,0,.03);
@@ -104,12 +103,11 @@ def compact_brl(value: float) -> str:
     return brl(value)
 
 
-def kpi_card(label: str, value: str, positive: bool = False) -> str:
-    value_class = "kpi-value positive" if positive else "kpi-value"
+def kpi_card(label: str, value: str) -> str:
     return (
         '<div class="kpi-card">'
         f'<div class="kpi-label">{label}</div>'
-        f'<div class="{value_class}">{value}</div>'
+        f'<div class="kpi-value">{value}</div>'
         "</div>"
     )
 
@@ -240,7 +238,8 @@ st.markdown(
     unsafe_allow_html=True,
 )
 st.markdown(
-    '<div class="dashboard-title">Sales performance</div>', unsafe_allow_html=True
+    '<div class="dashboard-title">Desempenho de vendas</div>',
+    unsafe_allow_html=True,
 )
 st.markdown(
     '<div class="dashboard-subtitle">Visão consolidada das vendas válidas, com filtros interativos e rastreabilidade.</div>',
@@ -270,7 +269,6 @@ weighted_discount = (
 weighted_discount_label = (
     f"{weighted_discount:.1f}%" if weighted_discount is not None else "N/D"
 )
-quality_rate = counts["valid"] / counts["received"] * 100 if counts["received"] else 0
 
 kpis = "".join(
     [
@@ -278,16 +276,15 @@ kpis = "".join(
         kpi_card("Vendas", integer(sales_count)),
         kpi_card("Ticket médio", compact_brl(average_ticket)),
         kpi_card("Desconto ponderado", weighted_discount_label),
-        kpi_card("Aprovação de qualidade", f"{quality_rate:.2f}%", positive=True),
     ]
 )
 st.markdown(f'<div class="kpi-grid">{kpis}</div>', unsafe_allow_html=True)
 
-executive_tab, quality_tab, data_tab = st.tabs(
-    ["Visão executiva", "Qualidade", "Dados"]
+overview_tab, quality_tab, traceability_tab = st.tabs(
+    ["Visão geral", "Qualidade", "Rastreabilidade"]
 )
 
-with executive_tab:
+with overview_tab:
     monthly = (
         filtered.assign(mes=filtered["data_venda"].dt.to_period("M").dt.to_timestamp())
         .groupby("mes", as_index=False)
@@ -434,25 +431,84 @@ with quality_tab:
         '<div class="section-title">Resultado das validações</div>',
         unsafe_allow_html=True,
     )
-    st.dataframe(quality, width="stretch", hide_index=True)
+    quality_display = quality.rename(
+        columns={
+            "check": "Regra",
+            "severity": "Severidade",
+            "failed_rows": "Registros afetados",
+            "status": "Status",
+        }
+    ).copy()
+    quality_display["Severidade"] = quality_display["Severidade"].replace(
+        {"error": "Erro", "warning": "Aviso"}
+    )
+    quality_display["Status"] = quality_display["Status"].replace(
+        {"passed": "Aprovada", "failed": "Falhou", "warning": "Aviso"}
+    )
+    st.dataframe(quality_display, width="stretch", hide_index=True)
 
-    quality_chart_data = quality[quality["failed_rows"] > 0].sort_values("failed_rows")
+    quality_chart_data = quality_display[
+        quality_display["Registros afetados"] > 0
+    ].sort_values("Registros afetados")
     quality_chart = px.bar(
         quality_chart_data,
-        x="failed_rows",
-        y="check",
+        x="Registros afetados",
+        y="Regra",
         orientation="h",
-        color="severity",
-        color_discrete_map={"error": COLORS["red"], "warning": COLORS["orange"]},
+        color="Severidade",
+        color_discrete_map={"Erro": COLORS["red"], "Aviso": COLORS["orange"]},
         title="Ocorrências por regra de qualidade",
-        labels={"failed_rows": "Registros", "check": "", "severity": "Severidade"},
+        labels={"Registros afetados": "Registros", "Regra": ""},
     )
     quality_chart.update_traces(marker_cornerradius=5)
     style_figure(quality_chart, 470)
     st.plotly_chart(quality_chart, width="stretch", config={"displaylogo": False})
 
-with data_tab:
-    st.markdown(f"**{integer(len(filtered))} registros após os filtros**")
+with traceability_tab:
+    st.markdown(f"**{integer(len(filtered))} registros rastreáveis após os filtros**")
+    traceability_columns = [
+        "venda_id",
+        "data_venda",
+        "__source_file",
+        "__source_line",
+        "quality_issues",
+        "marca",
+        "modelo",
+        "loja",
+        "uf",
+        "consultor",
+        "valor_referencia",
+        "valor_venda",
+        "desconto_percentual",
+    ]
+    traceability = (
+        filtered[traceability_columns]
+        .sort_values("data_venda", ascending=False)
+        .rename(
+            columns={
+                "venda_id": "Venda",
+                "data_venda": "Data",
+                "__source_file": "Arquivo de origem",
+                "__source_line": "Linha de origem",
+                "quality_issues": "Alertas de qualidade",
+                "marca": "Marca",
+                "modelo": "Modelo",
+                "loja": "Loja",
+                "uf": "UF",
+                "consultor": "Consultor",
+                "valor_referencia": "Valor de referência",
+                "valor_venda": "Valor da venda",
+                "desconto_percentual": "Desconto (%)",
+            }
+        )
+    )
+    st.dataframe(
+        traceability,
+        width="stretch",
+        hide_index=True,
+        height=520,
+    )
+
     export_columns = [
         "venda_id",
         "data_venda",
@@ -466,15 +522,10 @@ with data_tab:
         "valor_referencia",
         "valor_venda",
         "desconto_percentual",
+        "quality_issues",
         "__source_file",
         "__source_line",
     ]
-    st.dataframe(
-        filtered[export_columns].sort_values("data_venda", ascending=False),
-        width="stretch",
-        hide_index=True,
-        height=520,
-    )
     csv_bytes = (
         filtered[export_columns].to_csv(index=False, sep=";").encode("utf-8-sig")
     )

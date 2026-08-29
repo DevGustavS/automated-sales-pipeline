@@ -102,3 +102,21 @@ def test_dashboard_displays_weighted_discount(tmp_path: Path, monkeypatch) -> No
     assert "Desconto ponderado" in kpi_grid
     assert "5.5%" in kpi_grid
     assert "7.5%" not in kpi_grid
+    assert "Aprovação de qualidade" not in kpi_grid
+
+    quality_table, traceability_table = [dataframe.value for dataframe in app.dataframe]
+    assert quality_table.columns.tolist() == [
+        "Regra",
+        "Severidade",
+        "Registros afetados",
+        "Status",
+    ]
+    assert quality_table.iloc[0].to_dict() == {
+        "Regra": "invalid_data_venda",
+        "Severidade": "Erro",
+        "Registros afetados": 0,
+        "Status": "Aprovada",
+    }
+    assert "Arquivo de origem" in traceability_table
+    assert "Linha de origem" in traceability_table
+    assert "Alertas de qualidade" in traceability_table
