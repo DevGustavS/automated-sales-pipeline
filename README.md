@@ -122,6 +122,38 @@ Tabelas DuckDB:
 
 Campos monetários da fato e do Parquet usam `DECIMAL(18,2)`; percentuais persistidos usam `DECIMAL(9,4)`. Entradas monetárias com mais de duas casas decimais não são arredondadas silenciosamente: são classificadas como inválidas.
 
+## Camada analítica
+
+Depois das validações, somente as vendas aprovadas formam `fact_vendas`. A fato
+mantém os identificadores de venda, veículo, loja e consultor; data da venda;
+atributos de loja (`loja`, `cidade`, `uf`), consultor e veículo (`marca`, `modelo`);
+valores de referência e venda; descontos derivados; campos de qualidade e origem.
+Isso atende às análises do desafio sem introduzir outro modelo dimensional.
+
+O fluxo permanece direto:
+
+```text
+vendas válidas → fact_vendas/Parquet → mart e KPIs → dashboard
+```
+
+| KPI | Fórmula | Origem | Ausência de dados |
+| --- | --- | --- | --- |
+| Faturamento | `SUM(valor_venda)` | `fact_vendas` | venda sem valor válido não entra na fato |
+| Quantidade de vendas | `COUNT(*)` | `fact_vendas` | zero quando a fato ou o filtro está vazio |
+| Ticket médio | `SUM(valor_venda) / COUNT(*)` | fato e mart | não calculado sem vendas |
+| Desconto absoluto | `valor_referencia - valor_venda` | `fact_vendas.desconto_valor` | nulo sem valor de referência; o agregado soma valores aplicáveis |
+| Desconto ponderado | `SUM(desconto_valor) / SUM(valor_referencia) * 100` | mart e dashboard | exclui referência nula ou zero; fica nulo no mart e `N/D` no dashboard sem base aplicável |
+
+O desconto ponderado usa o mesmo conjunto de linhas no numerador e denominador;
+não é a média simples dos percentuais de cada venda. O indicador operacional de
+aprovação exibido no dashboard continua sendo `vendas válidas / vendas recebidas`.
+
+`mart_vendas_mensal` agrega a fato por mês, marca, loja e UF. Ele contém quantidade,
+receita, ticket médio, desconto total e desconto percentual ponderado, preservando
+`DECIMAL` nas métricas financeiras. O dashboard consulta a fato para permitir os
+mesmos cálculos após filtros interativos; o Parquet materializa a mesma fato do
+DuckDB.
+
 ## Regras de qualidade
 
 O catálogo possui 18 regras: 12 `error` e 6 `warning`. Cada entrada de

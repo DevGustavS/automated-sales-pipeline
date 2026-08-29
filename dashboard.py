@@ -151,7 +151,7 @@ def load_data(
             """
             SELECT
                 venda_id, data_venda, valor_venda, valor_referencia,
-                desconto_percentual, marca, modelo, loja, uf,
+                desconto_valor, desconto_percentual, marca, modelo, loja, uf,
                 canal_origem, forma_pagamento, consultor,
                 quality_issues, __source_file, __source_line
             FROM fact_vendas
@@ -254,7 +254,22 @@ if filtered.empty:
 revenue = float(filtered["valor_venda"].sum())
 sales_count = len(filtered)
 average_ticket = float(filtered["valor_venda"].mean())
-average_discount = float(filtered["desconto_percentual"].mean())
+discount_applicable = filtered["valor_referencia"].notna() & filtered[
+    "valor_referencia"
+].ne(0)
+reference_total = filtered.loc[discount_applicable, "valor_referencia"].sum()
+weighted_discount = (
+    float(
+        filtered.loc[discount_applicable, "desconto_valor"].sum()
+        / reference_total
+        * 100
+    )
+    if pd.notna(reference_total) and reference_total != 0
+    else None
+)
+weighted_discount_label = (
+    f"{weighted_discount:.1f}%" if weighted_discount is not None else "N/D"
+)
 quality_rate = counts["valid"] / counts["received"] * 100 if counts["received"] else 0
 
 kpis = "".join(
@@ -262,7 +277,7 @@ kpis = "".join(
         kpi_card("Faturamento", compact_brl(revenue)),
         kpi_card("Vendas", integer(sales_count)),
         kpi_card("Ticket médio", compact_brl(average_ticket)),
-        kpi_card("Desconto médio", f"{average_discount:.1f}%"),
+        kpi_card("Desconto ponderado", weighted_discount_label),
         kpi_card("Aprovação de qualidade", f"{quality_rate:.2f}%", positive=True),
     ]
 )

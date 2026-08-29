@@ -415,6 +415,131 @@ def _logical_output(output_dir: Path, quarantine_dir: Path) -> tuple[object, ...
     return *counts, *file_hashes
 
 
+def test_fact_mart_and_parquet_have_consistent_analytical_metrics(
+    tmp_path: Path,
+) -> None:
+    raw_frames = _raw_frames(
+        [
+            _sale("S1", date="2025-01-10", reference="100.00", amount="90.00"),
+            _sale(
+                "S2",
+                date="2025-01-20",
+                vehicle_id="V2",
+                reference="1000.00",
+                amount="950.00",
+            ),
+            _sale(
+                "S3",
+                date="2025-02-10",
+                vehicle_id="V3",
+                store_id="L2",
+                consultant_id="C2",
+                reference="200.00",
+                amount="150.00",
+            ),
+        ]
+    )
+    normalized = build_pipeline.normalize(*raw_frames)
+    fact, rejected, report = build_pipeline.validate(*normalized)
+    output_dir = tmp_path / "output"
+    quarantine_dir = tmp_path / "quarantine"
+
+    assert rejected.empty
+    build_pipeline.save(
+        output_dir,
+        quarantine_dir,
+        raw_frames[0],
+        fact,
+        rejected,
+        report,
+        normalized[1],
+        normalized[2],
+        normalized[3],
+    )
+
+    connection = duckdb.connect(
+        str(output_dir / "sales_pipeline.duckdb"), read_only=True
+    )
+    try:
+        fact_metrics = connection.execute(
+            """
+            SELECT
+                COUNT(*),
+                SUM(valor_venda),
+                CAST(SUM(valor_venda) / COUNT(*) AS DECIMAL(18,4)),
+                SUM(desconto_valor),
+                CAST(
+                    SUM(desconto_valor) / SUM(valor_referencia) * 100
+                    AS DECIMAL(9,4)
+                )
+            FROM fact_vendas
+            """
+        ).fetchone()
+        mart_rows = connection.execute(
+            """
+            SELECT
+                mes, loja, quantidade_vendas, receita, ticket_medio,
+                desconto_total, desconto_percentual_ponderado
+            FROM mart_vendas_mensal
+            ORDER BY mes, loja
+            """
+        ).fetchall()
+        mart_totals = connection.execute(
+            """
+            SELECT
+                SUM(quantidade_vendas), SUM(receita), SUM(desconto_total)
+            FROM mart_vendas_mensal
+            """
+        ).fetchone()
+        mart_types = dict(
+            connection.execute(
+                "SELECT column_name, column_type FROM (DESCRIBE mart_vendas_mensal)"
+            ).fetchall()
+        )
+        parquet_metrics = connection.execute(
+            """
+            SELECT COUNT(*), SUM(valor_venda), SUM(desconto_valor)
+            FROM read_parquet(?)
+            """,
+            [str(output_dir / "fact_sales_pipeline.parquet")],
+        ).fetchone()
+    finally:
+        connection.close()
+
+    assert fact_metrics == (
+        3,
+        Decimal("1190.00"),
+        Decimal("396.6667"),
+        Decimal("110.00"),
+        Decimal("8.4615"),
+    )
+    assert [tuple(row[1:]) for row in mart_rows] == [
+        (
+            "Centro",
+            2,
+            Decimal("1040.00"),
+            Decimal("520.00"),
+            Decimal("60.00"),
+            Decimal("5.4545"),
+        ),
+        (
+            "Norte",
+            1,
+            Decimal("150.00"),
+            Decimal("150.00"),
+            Decimal("50.00"),
+            Decimal("25.0000"),
+        ),
+    ]
+    assert [str(row[0])[:7] for row in mart_rows] == ["2025-01", "2025-02"]
+    assert mart_totals == (3, Decimal("1190.00"), Decimal("110.00"))
+    assert mart_types["receita"] == "DECIMAL(18,2)"
+    assert mart_types["ticket_medio"] == "DECIMAL(18,2)"
+    assert mart_types["desconto_total"] == "DECIMAL(18,2)"
+    assert mart_types["desconto_percentual_ponderado"] == "DECIMAL(9,4)"
+    assert parquet_metrics == (3, Decimal("1190.00"), Decimal("110.00"))
+
+
 def test_pipeline_reexecution_is_logically_idempotent(tmp_path: Path) -> None:
     input_dir = tmp_path / "input"
     output_dir = tmp_path / "output"
@@ -466,6 +591,8 @@ def test_pipeline_reexecution_is_logically_idempotent(tmp_path: Path) -> None:
     assert fact_types["desconto_valor"] == "DECIMAL(18,2)"
     assert mart_types["receita"] == "DECIMAL(18,2)"
     assert mart_types["ticket_medio"] == "DECIMAL(18,2)"
+    assert mart_types["desconto_total"] == "DECIMAL(18,2)"
+    assert mart_types["desconto_percentual_ponderado"] == "DECIMAL(9,4)"
     assert parquet_types["valor_venda"] == "DECIMAL(18,2)"
     assert revenue == Decimal("170.50")
 

@@ -566,8 +566,22 @@ def _write_outputs(
                 COUNT(*) AS quantidade_vendas,
                 CAST(SUM(valor_venda) AS DECIMAL(18,2)) AS receita,
                 CAST(AVG(valor_venda) AS DECIMAL(18,2)) AS ticket_medio,
-                CAST(AVG(desconto_percentual) AS DECIMAL(9,4))
-                    AS desconto_medio_percentual
+                CAST(SUM(desconto_valor) AS DECIMAL(18,2)) AS desconto_total,
+                CAST(
+                    SUM(desconto_valor) FILTER (
+                        WHERE valor_referencia IS NOT NULL
+                          AND valor_referencia <> 0
+                    )
+                    / NULLIF(
+                        SUM(valor_referencia) FILTER (
+                            WHERE valor_referencia IS NOT NULL
+                              AND valor_referencia <> 0
+                        ),
+                        0
+                    )
+                    * 100
+                    AS DECIMAL(9,4)
+                ) AS desconto_percentual_ponderado
             FROM fact_vendas
             GROUP BY 1, 2, 3, 4
         """)
