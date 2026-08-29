@@ -50,6 +50,7 @@ output/*
 *.log
 ~$*
 .cache/
+.npm-cache/
 tmp/
 temp/
 
@@ -75,4 +76,6 @@ data/incoming/*
 
 # Local artifacts
 *_bundle*.zip
+/Technical Challenge - Automated Sales Pipeline.md
+/Teste_Tecnico_Dados_Candidato_20260825.zip
 debug.txt

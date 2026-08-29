@@ -132,14 +132,14 @@ def test_quality_catalog_is_complete_unique_and_exposed_in_report() -> None:
     }
     rule_ids = [rule["rule_id"] for rule in build_pipeline.QUALITY_RULES]
 
-    assert len(rule_ids) == len(set(rule_ids)) == 18
+    assert len(rule_ids) == len(set(rule_ids)) == 20
     assert all(required_fields <= rule.keys() for rule in build_pipeline.QUALITY_RULES)
     assert {rule["severity"] for rule in build_pipeline.QUALITY_RULES} == {
         "error",
         "warning",
     }
     assert (
-        sum(rule["severity"] == "error" for rule in build_pipeline.QUALITY_RULES) == 12
+        sum(rule["severity"] == "error" for rule in build_pipeline.QUALITY_RULES) == 14
     )
     assert (
         sum(rule["severity"] == "warning" for rule in build_pipeline.QUALITY_RULES) == 6
@@ -188,6 +188,12 @@ def test_quality_catalog_is_complete_unique_and_exposed_in_report() -> None:
         ),
         pytest.param(
             "negative_valor_venda", [_sale("S1", amount="-1.00")], id="negative-amount"
+        ),
+        pytest.param("zero_valor_venda", [_sale("S1", amount="0")], id="zero-amount"),
+        pytest.param(
+            "suspicious_valor_venda_placeholder",
+            [_sale("S1", amount="9999999")],
+            id="suspicious-placeholder",
         ),
         pytest.param(
             "missing_veiculo_id", [_sale("S1", vehicle_id=None)], id="missing-vehicle"
@@ -295,9 +301,42 @@ def test_money_parser_and_calculations_preserve_cents_exactly() -> None:
 
     assert rejected.empty
     assert fact["valor_venda"].tolist() == [Decimal("90.05"), Decimal("150.15")]
-    assert fact["desconto_valor"].tolist() == [Decimal("10.05"), Decimal("50.05")]
+    assert fact["desconto_concedido"].tolist() == [
+        Decimal("10.05"),
+        Decimal("50.05"),
+    ]
     assert fact["valor_venda"].sum() == Decimal("240.20")
     assert fact["valor_venda"].sum() / Decimal(len(fact)) == Decimal("120.10")
+
+
+def test_discount_and_reference_premium_are_non_negative_and_separated() -> None:
+    fact, rejected, _ = _normalize_and_validate(
+        [
+            _sale("S1", reference="100.00", amount="90.00"),
+            _sale("S2", vehicle_id="V2", reference="100.00", amount="110.00"),
+            _sale("S3", vehicle_id="V3", reference="100.00", amount="100.00"),
+        ]
+    )
+
+    assert rejected.empty
+    assert fact["venda_id"].tolist() == ["S1", "S2", "S3"]
+    assert fact["desconto_concedido"].tolist() == [
+        Decimal("10.00"),
+        Decimal("0.00"),
+        Decimal("0.00"),
+    ]
+    assert fact["agio_referencia"].tolist() == [
+        Decimal("0.00"),
+        Decimal("10.00"),
+        Decimal("0.00"),
+    ]
+    assert fact["variacao_liquida_referencia"].tolist() == [
+        Decimal("10.00"),
+        Decimal("-10.00"),
+        Decimal("0.00"),
+    ]
+    assert fact["desconto_concedido"].ge(0).all()
+    assert fact["agio_referencia"].ge(0).all()
 
 
 def test_money_parser_rejects_non_cent_precision() -> None:
@@ -435,7 +474,7 @@ def test_fact_mart_and_parquet_have_consistent_analytical_metrics(
                 store_id="L2",
                 consultant_id="C2",
                 reference="200.00",
-                amount="150.00",
+                amount="250.00",
             ),
         ]
     )
@@ -467,9 +506,17 @@ def test_fact_mart_and_parquet_have_consistent_analytical_metrics(
                 COUNT(*),
                 SUM(valor_venda),
                 CAST(SUM(valor_venda) / COUNT(*) AS DECIMAL(18,4)),
-                SUM(desconto_valor),
+                SUM(desconto_concedido),
+                SUM(agio_referencia),
+                SUM(variacao_liquida_referencia),
                 CAST(
-                    SUM(desconto_valor) / SUM(valor_referencia) * 100
+                    SUM(desconto_concedido) FILTER (
+                        WHERE valor_venda < valor_referencia
+                    )
+                    / SUM(valor_referencia) FILTER (
+                        WHERE valor_venda < valor_referencia
+                    )
+                    * 100
                     AS DECIMAL(9,4)
                 )
             FROM fact_vendas
@@ -479,7 +526,9 @@ def test_fact_mart_and_parquet_have_consistent_analytical_metrics(
             """
             SELECT
                 mes, loja, quantidade_vendas, receita, ticket_medio,
-                desconto_total, desconto_percentual_ponderado
+                desconto_concedido_total, agio_referencia_total,
+                variacao_liquida_referencia_total,
+                desconto_percentual_ponderado
             FROM mart_vendas_mensal
             ORDER BY mes, loja
             """
@@ -487,7 +536,9 @@ def test_fact_mart_and_parquet_have_consistent_analytical_metrics(
         mart_totals = connection.execute(
             """
             SELECT
-                SUM(quantidade_vendas), SUM(receita), SUM(desconto_total)
+                SUM(quantidade_vendas), SUM(receita),
+                SUM(desconto_concedido_total), SUM(agio_referencia_total),
+                SUM(variacao_liquida_referencia_total)
             FROM mart_vendas_mensal
             """
         ).fetchone()
@@ -498,7 +549,9 @@ def test_fact_mart_and_parquet_have_consistent_analytical_metrics(
         )
         parquet_metrics = connection.execute(
             """
-            SELECT COUNT(*), SUM(valor_venda), SUM(desconto_valor)
+            SELECT
+                COUNT(*), SUM(valor_venda), SUM(desconto_concedido),
+                SUM(agio_referencia), SUM(variacao_liquida_referencia)
             FROM read_parquet(?)
             """,
             [str(output_dir / "fact_sales_pipeline.parquet")],
@@ -508,10 +561,12 @@ def test_fact_mart_and_parquet_have_consistent_analytical_metrics(
 
     assert fact_metrics == (
         3,
-        Decimal("1190.00"),
-        Decimal("396.6667"),
-        Decimal("110.00"),
-        Decimal("8.4615"),
+        Decimal("1290.00"),
+        Decimal("430.0000"),
+        Decimal("60.00"),
+        Decimal("50.00"),
+        Decimal("10.00"),
+        Decimal("5.4545"),
     )
     assert [tuple(row[1:]) for row in mart_rows] == [
         (
@@ -520,24 +575,42 @@ def test_fact_mart_and_parquet_have_consistent_analytical_metrics(
             Decimal("1040.00"),
             Decimal("520.00"),
             Decimal("60.00"),
+            Decimal("0.00"),
+            Decimal("60.00"),
             Decimal("5.4545"),
         ),
         (
             "Norte",
             1,
-            Decimal("150.00"),
-            Decimal("150.00"),
+            Decimal("250.00"),
+            Decimal("250.00"),
+            Decimal("0.00"),
             Decimal("50.00"),
-            Decimal("25.0000"),
+            Decimal("-50.00"),
+            None,
         ),
     ]
     assert [str(row[0])[:7] for row in mart_rows] == ["2025-01", "2025-02"]
-    assert mart_totals == (3, Decimal("1190.00"), Decimal("110.00"))
+    assert mart_totals == (
+        3,
+        Decimal("1290.00"),
+        Decimal("60.00"),
+        Decimal("50.00"),
+        Decimal("10.00"),
+    )
     assert mart_types["receita"] == "DECIMAL(18,2)"
     assert mart_types["ticket_medio"] == "DECIMAL(18,2)"
-    assert mart_types["desconto_total"] == "DECIMAL(18,2)"
+    assert mart_types["desconto_concedido_total"] == "DECIMAL(18,2)"
+    assert mart_types["agio_referencia_total"] == "DECIMAL(18,2)"
+    assert mart_types["variacao_liquida_referencia_total"] == "DECIMAL(18,2)"
     assert mart_types["desconto_percentual_ponderado"] == "DECIMAL(9,4)"
-    assert parquet_metrics == (3, Decimal("1190.00"), Decimal("110.00"))
+    assert parquet_metrics == (
+        3,
+        Decimal("1290.00"),
+        Decimal("60.00"),
+        Decimal("50.00"),
+        Decimal("10.00"),
+    )
 
 
 def test_pipeline_reexecution_is_logically_idempotent(tmp_path: Path) -> None:
@@ -588,12 +661,19 @@ def test_pipeline_reexecution_is_logically_idempotent(tmp_path: Path) -> None:
         connection.close()
 
     assert fact_types["valor_venda"] == "DECIMAL(18,2)"
-    assert fact_types["desconto_valor"] == "DECIMAL(18,2)"
+    assert fact_types["desconto_concedido"] == "DECIMAL(18,2)"
+    assert fact_types["agio_referencia"] == "DECIMAL(18,2)"
+    assert fact_types["variacao_liquida_referencia"] == "DECIMAL(18,2)"
     assert mart_types["receita"] == "DECIMAL(18,2)"
     assert mart_types["ticket_medio"] == "DECIMAL(18,2)"
-    assert mart_types["desconto_total"] == "DECIMAL(18,2)"
+    assert mart_types["desconto_concedido_total"] == "DECIMAL(18,2)"
+    assert mart_types["agio_referencia_total"] == "DECIMAL(18,2)"
+    assert mart_types["variacao_liquida_referencia_total"] == "DECIMAL(18,2)"
     assert mart_types["desconto_percentual_ponderado"] == "DECIMAL(9,4)"
     assert parquet_types["valor_venda"] == "DECIMAL(18,2)"
+    assert parquet_types["desconto_concedido"] == "DECIMAL(18,2)"
+    assert parquet_types["agio_referencia"] == "DECIMAL(18,2)"
+    assert parquet_types["variacao_liquida_referencia"] == "DECIMAL(18,2)"
     assert revenue == Decimal("170.50")
 
 

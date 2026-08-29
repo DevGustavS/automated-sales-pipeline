@@ -16,7 +16,9 @@ def _create_empty_database(database: Path) -> None:
                 data_venda TIMESTAMP,
                 valor_venda DECIMAL(18,2),
                 valor_referencia DECIMAL(18,2),
-                desconto_valor DECIMAL(18,2),
+                desconto_concedido DECIMAL(18,2),
+                agio_referencia DECIMAL(18,2),
+                variacao_liquida_referencia DECIMAL(18,2),
                 desconto_percentual DECIMAL(9,4),
                 marca VARCHAR,
                 modelo VARCHAR,
@@ -51,12 +53,14 @@ def _create_analytical_database(database: Path) -> None:
             """
             INSERT INTO fact_vendas VALUES
                 (
-                    'S1', '2025-01-10', 90.00, 100.00, 10.00, 10.0000,
+                    'S1', '2025-01-10', 90.00, 100.00,
+                    10.00, 0.00, 10.00, 10.0000,
                     'MARCA', 'Modelo 1', 'Centro', 'AM', 'Loja', 'À vista',
                     'Ana', '', 'vendas.csv', 2
                 ),
                 (
-                    'S2', '2025-01-20', 950.00, 1000.00, 50.00, 5.0000,
+                    'S2', '2025-01-20', 110.00, 100.00,
+                    0.00, 10.00, -10.00, 0.0000,
                     'MARCA', 'Modelo 2', 'Centro', 'AM', 'Loja', 'À vista',
                     'Ana', '', 'vendas.csv', 3
                 );
@@ -85,7 +89,9 @@ def test_dashboard_handles_empty_fact_before_building_date_filter(
     ]
 
 
-def test_dashboard_displays_weighted_discount(tmp_path: Path, monkeypatch) -> None:
+def test_dashboard_displays_discount_without_offsetting_reference_premium(
+    tmp_path: Path, monkeypatch
+) -> None:
     database = tmp_path / "analytical.duckdb"
     _create_analytical_database(database)
     monkeypatch.setenv("SALES_PIPELINE_DB_PATH", str(database))
@@ -99,9 +105,9 @@ def test_dashboard_displays_weighted_discount(tmp_path: Path, monkeypatch) -> No
         for markdown in app.markdown
         if '<div class="kpi-grid">' in markdown.value
     )
-    assert "Desconto ponderado" in kpi_grid
-    assert "5.5%" in kpi_grid
-    assert "7.5%" not in kpi_grid
+    assert "Desconto concedido" in kpi_grid
+    assert "R$ 10,00" in kpi_grid
+    assert "Desconto ponderado" not in kpi_grid
     assert "Aprovação de qualidade" not in kpi_grid
 
     quality_table, traceability_table = [dataframe.value for dataframe in app.dataframe]

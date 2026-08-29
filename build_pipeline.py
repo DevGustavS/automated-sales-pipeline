@@ -16,12 +16,15 @@ import pipeline
 
 NULL_VALUES = {"", "na", "n/a", "null", "none", "nan", "-"}
 MONEY_QUANTUM = Decimal("0.01")
+SUSPICIOUS_SALE_VALUE_PLACEHOLDER = Decimal("9999999.00")
 FIRST_SOURCE_OCCURRENCE = "first"
 TABLE_DECIMAL_COLUMNS = {
     "fact_vendas": {
         "valor_referencia": "DECIMAL(18,2)",
         "valor_venda": "DECIMAL(18,2)",
-        "desconto_valor": "DECIMAL(18,2)",
+        "desconto_concedido": "DECIMAL(18,2)",
+        "agio_referencia": "DECIMAL(18,2)",
+        "variacao_liquida_referencia": "DECIMAL(18,2)",
         "desconto_percentual": "DECIMAL(9,4)",
     },
     "rejected_sales": {
@@ -134,6 +137,29 @@ QUALITY_RULES: tuple[dict[str, object], ...] = (
         "condition": "valor_venda é menor que zero",
         "treatment": "reject_sale",
         "reason": "Venda negativa exige tratamento de negócio não definido.",
+        "invalidates_sale": True,
+    },
+    {
+        "rule_id": "zero_valor_venda",
+        "description": "Valor da venda igual a zero.",
+        "severity": "error",
+        "dataset": "vendas",
+        "condition": "valor_venda é igual a zero",
+        "treatment": "reject_sale",
+        "reason": "Uma venda sem valor não representa uma transação comercial válida.",
+        "invalidates_sale": True,
+    },
+    {
+        "rule_id": "suspicious_valor_venda_placeholder",
+        "description": "Valor da venda contém o placeholder 9.999.999 da fonte.",
+        "severity": "error",
+        "dataset": "vendas",
+        "condition": "valor_venda é exatamente igual a 9.999.999",
+        "treatment": "reject_sale",
+        "reason": (
+            "O valor repetido é um extremo incompatível com as referências e com "
+            "os demais valores comerciais deste dataset."
+        ),
         "invalidates_sale": True,
     },
     {
@@ -433,6 +459,11 @@ def validate(
         ),
         ("invalid_valor_venda", vendas["valor_venda"].isna()),
         ("negative_valor_venda", vendas["valor_venda"].lt(0)),
+        ("zero_valor_venda", vendas["valor_venda"].eq(Decimal("0.00"))),
+        (
+            "suspicious_valor_venda_placeholder",
+            vendas["valor_venda"].eq(SUSPICIOUS_SALE_VALUE_PLACEHOLDER),
+        ),
         (
             "invalid_valor_referencia",
             vendas["valor_referencia"].isna(),
@@ -497,11 +528,20 @@ def validate(
             validate="many_to_one",
         )
     )
-    fato["desconto_valor"] = fato["valor_referencia"] - fato["valor_venda"]
-    has_reference = fato["valor_referencia"].notna() & fato["valor_referencia"].ne(0)
+    reference_difference = fato["valor_referencia"] - fato["valor_venda"]
+    fato["desconto_concedido"] = reference_difference.map(
+        lambda value: max(value, Decimal("0.00")) if pd.notna(value) else pd.NA
+    )
+    fato["agio_referencia"] = reference_difference.map(
+        lambda value: max(-value, Decimal("0.00")) if pd.notna(value) else pd.NA
+    )
+    fato["variacao_liquida_referencia"] = (
+        fato["desconto_concedido"] - fato["agio_referencia"]
+    )
+    has_reference = fato["valor_referencia"].notna() & fato["valor_referencia"].gt(0)
     fato["desconto_percentual"] = pd.Series(pd.NA, index=fato.index, dtype="Float64")
     fato.loc[has_reference, "desconto_percentual"] = (
-        fato.loc[has_reference, "desconto_valor"]
+        fato.loc[has_reference, "desconto_concedido"]
         / fato.loc[has_reference, "valor_referencia"]
         * Decimal(100)
     ).map(float)
@@ -566,16 +606,22 @@ def _write_outputs(
                 COUNT(*) AS quantidade_vendas,
                 CAST(SUM(valor_venda) AS DECIMAL(18,2)) AS receita,
                 CAST(AVG(valor_venda) AS DECIMAL(18,2)) AS ticket_medio,
-                CAST(SUM(desconto_valor) AS DECIMAL(18,2)) AS desconto_total,
                 CAST(
-                    SUM(desconto_valor) FILTER (
-                        WHERE valor_referencia IS NOT NULL
-                          AND valor_referencia <> 0
+                    SUM(desconto_concedido) AS DECIMAL(18,2)
+                ) AS desconto_concedido_total,
+                CAST(
+                    SUM(agio_referencia) AS DECIMAL(18,2)
+                ) AS agio_referencia_total,
+                CAST(
+                    SUM(variacao_liquida_referencia) AS DECIMAL(18,2)
+                ) AS variacao_liquida_referencia_total,
+                CAST(
+                    SUM(desconto_concedido) FILTER (
+                        WHERE valor_venda < valor_referencia
                     )
                     / NULLIF(
                         SUM(valor_referencia) FILTER (
-                            WHERE valor_referencia IS NOT NULL
-                              AND valor_referencia <> 0
+                            WHERE valor_venda < valor_referencia
                         ),
                         0
                     )
