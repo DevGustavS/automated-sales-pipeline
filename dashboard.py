@@ -82,6 +82,10 @@ THEMES = {
         "quality_bg": "#E8F1EC",
         "quality_text": "#2E6849",
         "quality_border": "#CDE3D6",
+        "control_hover_bg": "#F0F3F6",
+        "control_selected_bg": "#E5F2FC",
+        "disabled_bg": "#F1F2F4",
+        "disabled_text": "#A4A19B",
         "dataframe_filter": "none",
     },
     "dark": {
@@ -97,6 +101,10 @@ THEMES = {
         "quality_bg": "#17271F",
         "quality_text": "#8BD5A8",
         "quality_border": "#2F6848",
+        "control_hover_bg": "#21262D",
+        "control_selected_bg": "#1B3148",
+        "disabled_bg": "#1C2128",
+        "disabled_text": "#6E7681",
         "dataframe_filter": "invert(.9) hue-rotate(180deg)",
     },
 }
@@ -114,12 +122,14 @@ THEME = THEMES["dark" if dark_mode else "light"]
 st.markdown(
     f"""
     <style>
-    .stApp {{
+    html, body, .stApp {{
         background: {THEME["app"]};
         color: {THEME["text"]};
+        color-scheme: {"dark" if dark_mode else "light"};
         --background-color: {THEME["app"]};
         --secondary-background-color: {THEME["surface"]};
         --text-color: {THEME["text"]};
+        --primary-color: {COLORS["blue"]};
     }}
     .block-container {{
         max-width: 1440px;
@@ -135,25 +145,91 @@ st.markdown(
     [data-testid="stSidebar"] label,
     [data-testid="stSidebar"] [data-testid="stMarkdownContainer"],
     [data-testid="stCaptionContainer"] {{ color: {THEME["muted"]}; }}
-    [data-testid="stSidebar"] [data-baseweb="select"] > div,
-    [data-testid="stSidebar"] [data-baseweb="input"] > div {{
-        background-color: {THEME["surface"]};
-        color: {THEME["text"]};
-        border-color: {THEME["border"]};
-    }}
+    [data-testid="stWidgetLabel"] p,
+    [data-testid="stWidgetLabel"] label {{ color: {THEME["muted"]}; }}
+    [data-testid="stTextInputRootElement"],
+    [data-testid="stSelectbox"] [data-baseweb="select"] > div,
+    [data-testid="stMultiSelect"] [data-baseweb="select"] > div,
+    [data-testid="stSidebar"] [data-baseweb="input"] > div,
     [data-testid="stMultiSelect"] [role="group"],
     [data-testid="stDateInputField"] {{
-        background-color: {THEME["surface"]};
+        background-color: {THEME["surface"]} !important;
         color: {THEME["text"]};
-        border-color: {THEME["border"]};
+        border-color: {THEME["border"]} !important;
     }}
+    [data-testid="stTextInput"] input,
+    [data-testid="stSelectbox"] input,
+    [data-testid="stMultiSelect"] input {{
+        background-color: {THEME["surface"]} !important;
+    }}
+    [data-testid="stSelectbox"] div:has(> input[role="combobox"]),
+    [data-testid="stMultiSelect"] div:has(> input[role="combobox"]),
+    [data-testid="stSelectbox"] button[aria-label="Open"],
+    [data-testid="stMultiSelect"] button[aria-label="Open"] {{
+        background-color: {THEME["surface"]} !important;
+        border-color: {THEME["border"]} !important;
+    }}
+    [data-testid="stTextInput"] input,
+    [data-testid="stSelectbox"] input,
     [data-testid="stMultiSelect"] input,
     [data-testid="stDateInputField"] [role="spinbutton"] {{
         color: {THEME["text"]};
+        caret-color: {THEME["text"]};
     }}
+    [data-testid="stTextInput"] input::placeholder,
+    [data-testid="stSelectbox"] input::placeholder,
     [data-testid="stMultiSelect"] input::placeholder {{
         color: {THEME["muted"]};
         opacity: 1;
+    }}
+    [data-testid="stSelectbox"] svg,
+    [data-testid="stMultiSelect"] svg,
+    [data-testid="stDateInputField"] svg,
+    [data-testid="stSidebar"] button svg {{
+        color: {THEME["muted"]};
+        fill: currentColor;
+    }}
+    [data-testid="stSelectboxVirtualDropdown"],
+    [data-testid="stMultiSelectDropdown"],
+    [data-testid="stDateInputCalendar"],
+    [data-testid="stDateInputHeaderPickerPopover"],
+    [data-testid="stDateInputQuickSelectPopover"] {{
+        background: {THEME["surface"]} !important;
+        color: {THEME["text"]};
+        border-color: {THEME["border"]} !important;
+        box-shadow: 0 8px 24px {THEME["shadow"]};
+    }}
+    [data-testid="stSelectboxVirtualDropdown"] *,
+    [data-testid="stMultiSelectDropdown"] *,
+    [data-testid="stDateInputCalendar"] *,
+    [data-testid="stDateInputHeaderPickerPopover"] *,
+    [data-testid="stDateInputQuickSelectPopover"] * {{
+        color: {THEME["text"]} !important;
+    }}
+    [data-testid="stSelectboxVirtualDropdown"] [role="option"],
+    [data-testid="stMultiSelectDropdown"] [role="option"] {{
+        color: {THEME["text"]} !important;
+    }}
+    [data-testid="stSelectboxVirtualDropdown"] [role="option"]:hover,
+    [data-testid="stMultiSelectDropdown"] [role="option"]:hover {{
+        background: {THEME["control_hover_bg"]} !important;
+    }}
+    [data-testid="stSelectboxVirtualDropdown"] [role="option"][aria-selected="true"],
+    [data-testid="stMultiSelectDropdown"] [role="option"][aria-selected="true"] {{
+        background: {THEME["control_selected_bg"]} !important;
+    }}
+    [data-testid="stDateInputCalendar"] button,
+    [data-testid="stDateInputQuickSelect"] {{
+        color: {THEME["text"]};
+    }}
+    [data-testid="stDateInputCalendar"] [role="gridcell"][aria-selected="true"] {{
+        background: {THEME["control_selected_bg"]};
+    }}
+    [data-testid="stDateInputCalendar"] button:disabled {{
+        color: {THEME["disabled_text"]} !important;
+    }}
+    [data-testid="stDateInputQuickSelectPopover"] [role="option"]:hover {{
+        background: {THEME["control_hover_bg"]} !important;
     }}
     .kpi-grid {{
         display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
@@ -194,7 +270,15 @@ st.markdown(
         color: {THEME["muted"]};
     }}
     [data-testid="stTab"] p {{ color: inherit; }}
-    [data-testid="stTab"][aria-selected="true"] {{ color: #2783DE; }}
+    [data-testid="stTab"]:hover {{
+        background: {THEME["control_hover_bg"]};
+        color: {THEME["text"]};
+    }}
+    [data-testid="stTab"][aria-selected="true"] {{ color: {COLORS["blue"]}; }}
+    [data-testid="stTab"]:focus-visible {{
+        outline: 2px solid {COLORS["blue"]};
+        outline-offset: 2px;
+    }}
     [data-testid="stDataFrame"],
     [data-testid="stDataFrameResizable"] {{
         background: {THEME["surface"]};
@@ -221,25 +305,45 @@ st.markdown(
         --gdg-bg-bubble-selected: {THEME["border"]} !important;
         --gdg-border-color: {THEME["border"]} !important;
         --gdg-horizontal-border-color: {THEME["border"]} !important;
-        --gdg-link-color: #2783DE !important;
+        --gdg-link-color: {COLORS["blue"]} !important;
     }}
     [data-testid="stDataFrame"] canvas {{
         filter: {THEME["dataframe_filter"]};
     }}
+    [data-testid="stButton"] button,
     [data-testid="stDownloadButton"] button {{
         background-color: {THEME["surface"]} !important;
         color: {THEME["text"]} !important;
         border: 1px solid {THEME["border"]} !important;
     }}
+    [data-testid="stButton"] button p,
     [data-testid="stDownloadButton"] button p {{ color: inherit; }}
+    [data-testid="stButton"] button:hover,
     [data-testid="stDownloadButton"] button:hover {{
-        background-color: {THEME["app"]} !important;
-        color: #2783DE !important;
-        border-color: #2783DE !important;
+        background-color: {THEME["control_hover_bg"]} !important;
+        color: {COLORS["blue"]} !important;
+        border-color: {COLORS["blue"]} !important;
     }}
+    [data-testid="stButton"] button:active,
+    [data-testid="stDownloadButton"] button:active {{
+        background-color: {THEME["control_selected_bg"]} !important;
+    }}
+    [data-testid="stButton"] button:focus-visible,
     [data-testid="stDownloadButton"] button:focus-visible {{
-        outline: 2px solid #2783DE;
+        outline: 2px solid {COLORS["blue"]};
         outline-offset: 2px;
+    }}
+    [data-testid="stButton"] button:disabled,
+    [data-testid="stDownloadButton"] button:disabled {{
+        background-color: {THEME["disabled_bg"]} !important;
+        color: {THEME["disabled_text"]} !important;
+        border-color: {THEME["border"]} !important;
+    }}
+    [data-testid="stPlotlyChart"] .modebar-btn path {{
+        fill: {THEME["muted"]} !important;
+    }}
+    [data-testid="stPlotlyChart"] .modebar-btn:hover path {{
+        fill: {THEME["text"]} !important;
     }}
     @media (max-width: 760px) {{
         .block-container {{ padding-left: 1rem; padding-right: 1rem; }}
@@ -342,9 +446,22 @@ def style_figure(fig: go.Figure, height: int = 360) -> go.Figure:
             "y": 1.02,
             "xanchor": "right",
             "x": 1,
+            "font": {"color": THEME["text"]},
+            "title": {"font": {"color": THEME["muted"]}},
         },
-        xaxis={"showgrid": False, "linecolor": THEME["border"]},
-        yaxis={"gridcolor": THEME["grid"], "griddash": "dot", "zeroline": False},
+        xaxis={
+            "showgrid": False,
+            "linecolor": THEME["border"],
+            "tickfont": {"color": THEME["muted"]},
+            "title_font": {"color": THEME["muted"]},
+        },
+        yaxis={
+            "gridcolor": THEME["grid"],
+            "griddash": "dot",
+            "zeroline": False,
+            "tickfont": {"color": THEME["muted"]},
+            "title_font": {"color": THEME["muted"]},
+        },
     )
     return fig
 
@@ -649,7 +766,8 @@ with overview_tab:
             "y": 0.5,
             "xanchor": "left",
             "x": 1.02,
-            "font": {"size": 12},
+            "font": {"size": 12, "color": THEME["text"]},
+            "title": {"font": {"color": THEME["muted"]}},
         },
     )
     left.plotly_chart(channel_chart, width="stretch", config={"displaylogo": False})
