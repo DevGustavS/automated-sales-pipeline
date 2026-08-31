@@ -1,13 +1,3 @@
-# Ambientes virtuais e configuração local
-.venv/
-venv/
-env/
-ENV/
-.env
-.env.*
-!.env.example
-.streamlit/secrets.toml
-
 # Python
 __pycache__/
 *.py[cod]
@@ -17,22 +7,36 @@ __pycache__/
 build/
 dist/
 
-# Ferramentas de qualidade e cobertura
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Tests, lint and coverage
 .pytest_cache/
 .ruff_cache/
 .coverage
 .coverage.*
 htmlcov/
 
-# Dados e artefatos locais; preserve apenas os diretórios
+# Environment and secrets
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+.streamlit/secrets.toml
+
+# Generated data; preserve only the directory placeholders
 data/incoming/*
 !data/incoming/.gitkeep
+data/output/*
+!data/output/.gitkeep
 data/quarantine/*
 !data/quarantine/.gitkeep
-output/*
-!output/.gitkeep
 
-# Bancos locais
+# Local databases
 *.duckdb
 *.duckdb.wal
 *.db
@@ -40,7 +44,7 @@ output/*
 *.sqlite
 *.sqlite3
 
-# Temporários e logs
+# Temporary files and logs
 *.tmp
 *.temp
 *.bak
@@ -53,27 +57,14 @@ output/*
 tmp/
 temp/
 
-# Editores e sistema operacional
+# Editors and operating systems
 .idea/
 .vscode/
 .DS_Store
 Thumbs.db
 Desktop.ini
 
-# Python
-.venv/
-__pycache__/
-*.py[cod]
-.pytest_cache/
-
-# Generated data
-data/output/*
-!data/output/.gitkeep
-data/incoming/*
-!data/incoming/.gitkeep
-*.duckdb
-
-# Local artifacts
+# Local challenge artifacts
 *_bundle*.zip
 /Technical Challenge - Automated Sales Pipeline.md
 /Teste_Tecnico_Dados_Candidato_20260825.zip
