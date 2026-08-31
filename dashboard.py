@@ -10,6 +10,16 @@ import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 
+from dashboard_formatting import (
+    axis_ticks,
+    brl,
+    compact_brl,
+    compact_number,
+    format_percentage,
+    integer,
+    percentage,
+)
+
 DB_PATH = Path(
     os.environ.get("SALES_PIPELINE_DB_PATH", "data/output/sales_pipeline.duckdb")
 )
@@ -356,22 +366,6 @@ st.markdown(
 )
 
 
-def brl(value: float) -> str:
-    formatted = f"{value:,.2f}"
-    return "R$ " + formatted.replace(",", "X").replace(".", ",").replace("X", ".")
-
-
-def compact_brl(value: float) -> str:
-    absolute = abs(value)
-    if absolute >= 1_000_000_000:
-        return f"R$ {value / 1_000_000_000:.1f} bi".replace(".", ",")
-    if absolute >= 1_000_000:
-        return f"R$ {value / 1_000_000:.1f} mi".replace(".", ",")
-    if absolute >= 1_000:
-        return f"R$ {value / 1_000:.1f} mil".replace(".", ",")
-    return brl(value)
-
-
 def kpi_card(label: str, value: str) -> str:
     return (
         '<div class="kpi-card">'
@@ -379,16 +373,6 @@ def kpi_card(label: str, value: str) -> str:
         f'<div class="kpi-value">{value}</div>'
         "</div>"
     )
-
-
-def integer(value: float) -> str:
-    return f"{int(value):,}".replace(",", ".")
-
-
-def percentage(numerator: float, denominator: float) -> str:
-    if denominator == 0:
-        return "0,00%"
-    return f"{numerator / denominator * 100:.2f}%".replace(".", ",")
 
 
 def friendly_quality_rule(rule: str) -> str:
@@ -463,6 +447,30 @@ def style_figure(fig: go.Figure, height: int = 360) -> go.Figure:
             "title_font": {"color": THEME["muted"]},
         },
     )
+    return fig
+
+
+def style_compact_axis(
+    fig: go.Figure,
+    values: pd.Series,
+    *,
+    axis: str,
+    monetary: bool,
+) -> go.Figure:
+    """Apply dynamic pt-BR compact labels without changing plotted values."""
+
+    tick_values = axis_ticks(values)
+    formatter = compact_brl if monetary else compact_number
+    tick_labels = [formatter(value) for value in tick_values]
+    axis_style = {
+        "tickmode": "array",
+        "tickvals": tick_values,
+        "ticktext": tick_labels,
+    }
+    if axis == "x":
+        fig.update_xaxes(**axis_style)
+    else:
+        fig.update_yaxes(**axis_style)
     return fig
 
 
@@ -641,7 +649,7 @@ total_discount = float(filtered["desconto_concedido"].sum())
 kpis = "".join(
     [
         kpi_card("Faturamento", compact_brl(revenue)),
-        kpi_card("Vendas", integer(sales_count)),
+        kpi_card("Vendas", compact_number(sales_count)),
         kpi_card("Ticket médio", compact_brl(average_ticket)),
         kpi_card("Desconto concedido", compact_brl(total_discount)),
     ]
@@ -680,11 +688,15 @@ with overview_tab:
             },
             fill="tozeroy",
             fillcolor="rgba(39,131,222,0.10)",
-            hovertemplate="%{x|%b/%Y}<br>Faturamento: R$ %{y:,.2f}<extra></extra>",
+            customdata=monthly["receita"].map(
+                lambda value: compact_brl(value, decimal_places=2)
+            ),
+            hovertemplate=("%{x|%b/%Y}<br>Faturamento: %{customdata}<extra></extra>"),
         )
     )
     line.update_layout(title="Evolução mensal do faturamento")
     style_figure(line, 390)
+    style_compact_axis(line, monthly["receita"], axis="y", monetary=True)
     st.plotly_chart(
         line,
         width="stretch",
@@ -702,6 +714,9 @@ with overview_tab:
         .nlargest(10, "valor_venda")
         .sort_values("valor_venda")
     )
+    brand["valor_formatado"] = brand["valor_venda"].map(
+        lambda value: compact_brl(value, decimal_places=2)
+    )
     brand_chart = px.bar(
         brand,
         x="valor_venda",
@@ -710,17 +725,28 @@ with overview_tab:
         title="Faturamento por marca",
         labels={"valor_venda": "Faturamento", "marca": ""},
         color_discrete_sequence=[COLORS["blue"]],
+        custom_data=["valor_formatado"],
     )
     brand_chart.update_traces(
-        marker_cornerradius=5, hovertemplate="%{y}<br>R$ %{x:,.2f}<extra></extra>"
+        marker_cornerradius=5,
+        hovertemplate="%{y}<br>%{customdata[0]}<extra></extra>",
     )
     style_figure(brand_chart)
+    style_compact_axis(
+        brand_chart,
+        brand["valor_venda"],
+        axis="x",
+        monetary=True,
+    )
     left.plotly_chart(brand_chart, width="stretch", config={"displaylogo": False})
 
     store = (
         filtered.groupby("loja", as_index=False)
         .agg(vendas=("venda_id", "count"), receita=("valor_venda", "sum"))
         .sort_values("receita", ascending=True)
+    )
+    store["receita_formatada"] = store["receita"].map(
+        lambda value: compact_brl(value, decimal_places=2)
     )
     store_chart = px.bar(
         store,
@@ -731,12 +757,15 @@ with overview_tab:
         labels={"receita": "Faturamento", "loja": ""},
         color="receita",
         color_continuous_scale=[[0, "#CFE4FA"], [1, COLORS["blue"]]],
+        custom_data=["receita_formatada"],
     )
     store_chart.update_layout(coloraxis_showscale=False)
     store_chart.update_traces(
-        marker_cornerradius=5, hovertemplate="%{y}<br>R$ %{x:,.2f}<extra></extra>"
+        marker_cornerradius=5,
+        hovertemplate="%{y}<br>%{customdata[0]}<extra></extra>",
     )
     style_figure(store_chart)
+    style_compact_axis(store_chart, store["receita"], axis="x", monetary=True)
     right.plotly_chart(store_chart, width="stretch", config={"displaylogo": False})
 
     left, right = st.columns(2)
@@ -744,6 +773,11 @@ with overview_tab:
         filtered["canal_origem"].fillna("Não informado").value_counts().reset_index()
     )
     channels.columns = ["canal", "vendas"]
+    channel_total = int(channels["vendas"].sum())
+    channels["vendas_formatadas"] = channels["vendas"].map(compact_number)
+    channels["percentual_formatado"] = channels["vendas"].map(
+        lambda value: percentage(value, channel_total)
+    )
     channel_chart = px.pie(
         channels,
         names="canal",
@@ -751,11 +785,15 @@ with overview_tab:
         hole=0.68,
         title="Vendas por canal",
         color_discrete_sequence=PALETTE,
+        custom_data=["vendas_formatadas", "percentual_formatado"],
     )
     channel_chart.update_traces(
+        text=channels["percentual_formatado"],
         textposition="inside",
-        textinfo="percent",
-        hovertemplate="%{label}<br>%{value:,} vendas (%{percent})<extra></extra>",
+        textinfo="text",
+        hovertemplate=(
+            "%{label}<br>%{customdata[0]} vendas (%{customdata[1]})<extra></extra>"
+        ),
     )
     style_figure(channel_chart)
     channel_chart.update_layout(
@@ -776,6 +814,7 @@ with overview_tab:
         filtered["forma_pagamento"].fillna("Não informado").value_counts().reset_index()
     )
     payments.columns = ["forma", "vendas"]
+    payments["vendas_formatadas"] = payments["vendas"].map(compact_number)
     payment_chart = px.bar(
         payments.sort_values("vendas"),
         x="vendas",
@@ -784,9 +823,14 @@ with overview_tab:
         title="Formas de pagamento",
         labels={"vendas": "Vendas", "forma": ""},
         color_discrete_sequence=[COLORS["green"]],
+        custom_data=["vendas_formatadas"],
     )
-    payment_chart.update_traces(marker_cornerradius=5)
+    payment_chart.update_traces(
+        marker_cornerradius=5,
+        hovertemplate="%{y}<br>%{customdata[0]} vendas<extra></extra>",
+    )
     style_figure(payment_chart)
+    style_compact_axis(payment_chart, payments["vendas"], axis="x", monetary=False)
     right.plotly_chart(payment_chart, width="stretch", config={"displaylogo": False})
 
 with quality_tab:
@@ -857,12 +901,17 @@ with quality_tab:
         {"passed": "Aprovada", "failed": "Falhou", "warning": "Aviso"}
     )
 
-    quality_chart_data = quality_display[
-        quality_display["Registros afetados"] > 0
-    ].sort_values("Registros afetados")
+    quality_chart_data = (
+        quality_display[quality_display["Registros afetados"] > 0]
+        .sort_values("Registros afetados")
+        .copy()
+    )
     if quality_chart_data.empty:
         st.info("Nenhuma ocorrência de qualidade foi registrada nesta execução.")
     else:
+        quality_chart_data["Registros formatados"] = quality_chart_data[
+            "Registros afetados"
+        ].map(compact_number)
         quality_chart = px.bar(
             quality_chart_data,
             x="Registros afetados",
@@ -872,12 +921,19 @@ with quality_tab:
             color_discrete_map={"Erro": COLORS["red"], "Aviso": COLORS["orange"]},
             title="Ocorrências por regra de qualidade",
             labels={"Registros afetados": "Registros", "Regra": ""},
+            custom_data=["Registros formatados"],
         )
         quality_chart.update_traces(
             marker_cornerradius=5,
-            hovertemplate="%{y}<br>%{x:,} registros<extra></extra>",
+            hovertemplate="%{y}<br>%{customdata[0]} registros<extra></extra>",
         )
         style_figure(quality_chart, 470)
+        style_compact_axis(
+            quality_chart,
+            quality_chart_data["Registros afetados"],
+            axis="x",
+            monetary=False,
+        )
         st.plotly_chart(
             quality_chart,
             width="stretch",
@@ -1038,26 +1094,33 @@ with traceability_tab:
         "__source_file",
         "__source_line",
     ]
-    traceability = investigated[traceability_columns].rename(
-        columns={
-            "venda_id": "Venda",
-            "data_venda": "Data",
-            "quality_issues": "Alertas de qualidade",
-            "marca": "Marca",
-            "modelo": "Modelo",
-            "loja": "Loja",
-            "uf": "UF",
-            "consultor": "Consultor",
-            "valor_referencia": "Valor de referência",
-            "valor_venda": "Valor da venda",
-            "desconto_percentual": "Desconto (%)",
-            "__source_file": "Arquivo de origem",
-            "__source_line": "Linha de origem",
-        }
+    traceability = (
+        investigated[traceability_columns]
+        .rename(
+            columns={
+                "venda_id": "Venda",
+                "data_venda": "Data",
+                "quality_issues": "Alertas de qualidade",
+                "marca": "Marca",
+                "modelo": "Modelo",
+                "loja": "Loja",
+                "uf": "UF",
+                "consultor": "Consultor",
+                "valor_referencia": "Valor de referência",
+                "valor_venda": "Valor da venda",
+                "desconto_percentual": "Desconto (%)",
+                "__source_file": "Arquivo de origem",
+                "__source_line": "Linha de origem",
+            }
+        )
+        .copy()
     )
     traceability["Alertas de qualidade"] = traceability["Alertas de qualidade"].where(
         quality_alert_mask(investigated), "Sem alertas"
     )
+    traceability["Valor da venda"] = traceability["Valor da venda"].map(brl)
+    traceability["Valor de referência"] = traceability["Valor de referência"].map(brl)
+    traceability["Desconto (%)"] = traceability["Desconto (%)"].map(format_percentage)
     st.dataframe(
         traceability,
         width="stretch",
@@ -1069,15 +1132,9 @@ with traceability_tab:
             "Alertas de qualidade": st.column_config.TextColumn(
                 "Alertas de qualidade", width="large"
             ),
-            "Valor da venda": st.column_config.NumberColumn(
-                "Valor da venda", format="R$ %.2f"
-            ),
-            "Valor de referência": st.column_config.NumberColumn(
-                "Valor de referência", format="R$ %.2f"
-            ),
-            "Desconto (%)": st.column_config.NumberColumn(
-                "Desconto (%)", format="%.2f%%"
-            ),
+            "Valor da venda": st.column_config.TextColumn("Valor da venda"),
+            "Valor de referência": st.column_config.TextColumn("Valor de referência"),
+            "Desconto (%)": st.column_config.TextColumn("Desconto (%)"),
             "Arquivo de origem": st.column_config.TextColumn(
                 "Arquivo de origem", width="large"
             ),

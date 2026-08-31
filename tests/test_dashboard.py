@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import date
 from pathlib import Path
 
@@ -195,6 +196,35 @@ def test_dashboard_displays_discount_without_offsetting_reference_premium(
     assert "Arquivo de origem" in traceability_table
     assert "Linha de origem" in traceability_table
     assert "Alertas de qualidade" in traceability_table
+
+
+def test_dashboard_formats_chart_numbers_without_american_separators(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    database = tmp_path / "chart-formatting.duckdb"
+    _create_analytical_database(database)
+    app = _run_dashboard(database, monkeypatch)
+
+    assert not app.exception
+    chart_specs = [json.loads(spec) for spec in _chart_specs(app)]
+    serialized_specs = [json.dumps(spec) for spec in chart_specs]
+    assert all(":,.2f" not in spec for spec in serialized_specs)
+
+    monthly, brand, store, channel, payment = chart_specs[:5]
+    assert all(
+        label.startswith("R$ ") for label in monthly["layout"]["yaxis"]["ticktext"]
+    )
+    assert all(
+        label.startswith("R$ ") for label in brand["layout"]["xaxis"]["ticktext"]
+    )
+    assert all(
+        label.startswith("R$ ") for label in store["layout"]["xaxis"]["ticktext"]
+    )
+    assert all(
+        not label.startswith("R$ ") for label in payment["layout"]["xaxis"]["ticktext"]
+    )
+    assert all("," in value for value in channel["data"][0]["text"])
+    assert all("customdata" in spec["data"][0] for spec in chart_specs)
 
 
 def test_dashboard_toggles_theme_without_changing_kpis_or_tables(
@@ -454,6 +484,35 @@ def test_traceability_displays_summary_lineage_and_null_alerts(
         "Cada venda preserva o arquivo e a linha de origem" in caption.value
         for caption in app.caption
     )
+
+
+def test_traceability_formats_values_only_in_the_display_copy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    database = tmp_path / "traceability-formatting.duckdb"
+    _create_analytical_database(database)
+    connection = duckdb.connect(str(database))
+    try:
+        connection.execute(
+            """
+            UPDATE fact_vendas
+            SET valor_venda = 1280000,
+                valor_referencia = 1300000,
+                desconto_percentual = 1.54
+            WHERE venda_id = 'S1'
+            """
+        )
+    finally:
+        connection.close()
+
+    app = _run_dashboard(database, monkeypatch)
+
+    assert not app.exception
+    row = _traceability_table(app).set_index("Venda").loc["S1"]
+    assert row["Valor da venda"] == "R$ 1.280.000,00"
+    assert row["Valor de referência"] == "R$ 1.300.000,00"
+    assert row["Desconto (%)"] == "1,54%"
+    assert row["Linha de origem"] == 2
 
 
 @pytest.mark.parametrize(
