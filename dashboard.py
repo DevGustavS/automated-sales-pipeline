@@ -53,6 +53,20 @@ QUALITY_RULE_LABELS = {
     "consultor_loja_mismatch": "Consultor vinculado a outra loja",
     "veiculo_multiple_sales": "Veículo associado a múltiplas vendas",
 }
+TRACEABILITY_SEARCH_COLUMNS = (
+    "venda_id",
+    "consultor",
+    "loja",
+    "modelo",
+    "marca",
+    "__source_file",
+)
+TRACEABILITY_SORT_OPTIONS = {
+    "Data mais recente": ("data_venda", False),
+    "Data mais antiga": ("data_venda", True),
+    "Maior valor de venda": ("valor_venda", False),
+    "Menor valor de venda": ("valor_venda", True),
+}
 
 THEMES = {
     "light": {
@@ -276,6 +290,32 @@ def percentage(numerator: float, denominator: float) -> str:
 def friendly_quality_rule(rule: str) -> str:
     rule_id = str(rule).strip()
     return QUALITY_RULE_LABELS.get(rule_id, rule_id.replace("_", " ").strip().title())
+
+
+def quality_alert_mask(frame: pd.DataFrame) -> pd.Series:
+    return frame["quality_issues"].astype("string").fillna("").str.strip().ne("")
+
+
+def search_traceability(frame: pd.DataFrame, query: str) -> pd.DataFrame:
+    normalized_query = query.strip()
+    if not normalized_query:
+        return frame
+
+    matches = pd.DataFrame(
+        {
+            column: frame[column]
+            .astype("string")
+            .str.contains(
+                normalized_query,
+                case=False,
+                na=False,
+                regex=False,
+            )
+            for column in TRACEABILITY_SEARCH_COLUMNS
+        },
+        index=frame.index,
+    ).any(axis=1)
+    return frame.loc[matches]
 
 
 def clear_filters(full_period: tuple[date, date]) -> None:
@@ -789,48 +829,144 @@ with quality_tab:
     )
 
 with traceability_tab:
-    st.markdown(f"**{integer(len(filtered))} registros rastreáveis após os filtros**")
+    st.markdown(
+        '<div class="dashboard-title">Rastreabilidade</div>',
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        '<div class="dashboard-subtitle">Investigue as vendas válidas e acompanhe '
+        "sua origem desde o arquivo de entrada.</div>",
+        unsafe_allow_html=True,
+    )
+
+    filtered_alert_mask = quality_alert_mask(filtered)
+    traceability_kpis = "".join(
+        [
+            kpi_card("Registros rastreáveis", integer(len(filtered))),
+            kpi_card("Registros com alertas", integer(filtered_alert_mask.sum())),
+        ]
+    )
+    st.markdown(
+        f'<div class="kpi-grid traceability-kpis">{traceability_kpis}</div>',
+        unsafe_allow_html=True,
+    )
+
+    st.markdown(
+        '<div class="section-title">Busca e investigação</div>',
+        unsafe_allow_html=True,
+    )
+    traceability_query = st.text_input(
+        "Buscar venda, consultor, loja ou modelo",
+        key="traceability_search",
+        placeholder="Digite um ID, nome, loja, modelo, marca ou arquivo",
+    )
+    quality_filter_column, sort_column = st.columns(2)
+    with quality_filter_column:
+        traceability_quality_filter = st.selectbox(
+            "Qualidade",
+            ["Todos", "Com alerta", "Sem alerta"],
+            key="traceability_quality_filter",
+        )
+    with sort_column:
+        traceability_sort = st.selectbox(
+            "Ordenar por",
+            list(TRACEABILITY_SORT_OPTIONS),
+            key="traceability_sort",
+        )
+
+    investigated = search_traceability(filtered.copy(), traceability_query)
+    investigated_alert_mask = quality_alert_mask(investigated)
+    if traceability_quality_filter == "Com alerta":
+        investigated = investigated.loc[investigated_alert_mask]
+    elif traceability_quality_filter == "Sem alerta":
+        investigated = investigated.loc[~investigated_alert_mask]
+
+    sort_column_name, sort_ascending = TRACEABILITY_SORT_OPTIONS[traceability_sort]
+    investigated = investigated.sort_values(
+        sort_column_name,
+        ascending=sort_ascending,
+        kind="stable",
+    )
+
+    investigated_count = len(investigated)
+    investigated_label = (
+        "registro rastreável" if investigated_count == 1 else "registros rastreáveis"
+    )
+    st.markdown(f"**{integer(investigated_count)} {investigated_label}**")
+    if investigated.empty:
+        st.info("Nenhuma venda corresponde aos critérios de investigação.")
+
+    st.markdown(
+        '<div class="section-title">Registros</div>',
+        unsafe_allow_html=True,
+    )
+    st.caption(
+        "Cada venda preserva o arquivo e a linha de origem, permitindo rastrear o "
+        "registro desde a ingestão até a camada analítica."
+    )
+
     traceability_columns = [
         "venda_id",
         "data_venda",
-        "__source_file",
-        "__source_line",
         "quality_issues",
         "marca",
         "modelo",
         "loja",
         "uf",
         "consultor",
-        "valor_referencia",
         "valor_venda",
+        "valor_referencia",
         "desconto_percentual",
+        "__source_file",
+        "__source_line",
     ]
-    traceability = (
-        filtered[traceability_columns]
-        .sort_values("data_venda", ascending=False)
-        .rename(
-            columns={
-                "venda_id": "Venda",
-                "data_venda": "Data",
-                "__source_file": "Arquivo de origem",
-                "__source_line": "Linha de origem",
-                "quality_issues": "Alertas de qualidade",
-                "marca": "Marca",
-                "modelo": "Modelo",
-                "loja": "Loja",
-                "uf": "UF",
-                "consultor": "Consultor",
-                "valor_referencia": "Valor de referência",
-                "valor_venda": "Valor da venda",
-                "desconto_percentual": "Desconto (%)",
-            }
-        )
+    traceability = investigated[traceability_columns].rename(
+        columns={
+            "venda_id": "Venda",
+            "data_venda": "Data",
+            "quality_issues": "Alertas de qualidade",
+            "marca": "Marca",
+            "modelo": "Modelo",
+            "loja": "Loja",
+            "uf": "UF",
+            "consultor": "Consultor",
+            "valor_referencia": "Valor de referência",
+            "valor_venda": "Valor da venda",
+            "desconto_percentual": "Desconto (%)",
+            "__source_file": "Arquivo de origem",
+            "__source_line": "Linha de origem",
+        }
+    )
+    traceability["Alertas de qualidade"] = traceability["Alertas de qualidade"].where(
+        quality_alert_mask(investigated), "Sem alertas"
     )
     st.dataframe(
         traceability,
         width="stretch",
         hide_index=True,
         height=520,
+        column_config={
+            "Venda": st.column_config.TextColumn("Venda"),
+            "Data": st.column_config.DatetimeColumn("Data", format="DD/MM/YYYY"),
+            "Alertas de qualidade": st.column_config.TextColumn(
+                "Alertas de qualidade", width="large"
+            ),
+            "Valor da venda": st.column_config.NumberColumn(
+                "Valor da venda", format="R$ %.2f"
+            ),
+            "Valor de referência": st.column_config.NumberColumn(
+                "Valor de referência", format="R$ %.2f"
+            ),
+            "Desconto (%)": st.column_config.NumberColumn(
+                "Desconto (%)", format="%.2f%%"
+            ),
+            "Arquivo de origem": st.column_config.TextColumn(
+                "Arquivo de origem", width="large"
+            ),
+            "Linha de origem": st.column_config.NumberColumn(
+                "Linha de origem", format="%d"
+            ),
+        },
     )
 
     export_columns = [
@@ -850,13 +986,13 @@ with traceability_tab:
         "__source_file",
         "__source_line",
     ]
-    csv_bytes = (
-        filtered[export_columns].to_csv(index=False, sep=";").encode("utf-8-sig")
+    investigated_csv_bytes = (
+        investigated[export_columns].to_csv(index=False, sep=";").encode("utf-8-sig")
     )
     st.download_button(
-        "Baixar dados filtrados em CSV",
-        data=csv_bytes,
-        file_name="vendas_filtradas.csv",
+        "Baixar dados investigados",
+        data=investigated_csv_bytes,
+        file_name="vendas_investigadas.csv",
         mime="text/csv",
         width="content",
     )

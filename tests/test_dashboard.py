@@ -64,7 +64,7 @@ def _create_analytical_database(database: Path) -> None:
                     'S2', '2025-01-20', 110.00, 100.00,
                     0.00, 10.00, -10.00, 0.0000,
                     'TOYOTA', 'Modelo 2', 'Norte', 'AM', 'Site', 'Pix',
-                    'Bruno', '', 'vendas.csv', 3
+                    'Bruno', 'orphan_consultor_id', 'vendas.csv', 3
                 ),
                 (
                     'S3', '2025-02-15', 200.00, 200.00,
@@ -76,7 +76,7 @@ def _create_analytical_database(database: Path) -> None:
                     'S4', '2025-03-05', 300.00, 300.00,
                     0.00, 0.00, 0.00, 0.0000,
                     'FORD', 'Modelo 4', 'Sul', 'RJ', 'Telefone', 'Cartão',
-                    'Diego', '', 'vendas.csv', 5
+                    'Diego', 'veiculo_multiple_sales', 'vendas.csv', 5
                 ),
                 (
                     'S5', '2025-03-20', 150.00, 150.00,
@@ -113,9 +113,12 @@ def _kpi_grid(app: AppTest) -> str:
     )
 
 
+def _traceability_table(app: AppTest):
+    return app.tabs[2].dataframe[0].value
+
+
 def _traceability_sales(app: AppTest) -> set[str]:
-    traceability = app.tabs[2].dataframe[0].value
-    return set(traceability["Venda"].tolist())
+    return set(_traceability_table(app)["Venda"].tolist())
 
 
 def _chart_specs(app: AppTest) -> tuple[str, ...]:
@@ -136,6 +139,14 @@ def _quality_kpi_grid(app: AppTest, class_name: str) -> str:
 
 def _quality_table(app: AppTest):
     return app.tabs[1].dataframe[0].value
+
+
+def _traceability_kpi_grid(app: AppTest) -> str:
+    return next(
+        markdown.value
+        for markdown in app.markdown
+        if '<div class="kpi-grid traceability-kpis">' in markdown.value
+    )
 
 
 def test_dashboard_handles_empty_fact_before_building_date_filter(
@@ -403,6 +414,191 @@ def test_quality_exports_the_locally_filtered_report_as_csv(
     )
     assert quality_download.url.endswith(".csv")
     assert _quality_table(app)["Regra"].tolist() == ["Venda duplicada"]
+
+
+def test_traceability_displays_summary_lineage_and_null_alerts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    database = tmp_path / "traceability-summary.duckdb"
+    _create_analytical_database(database)
+    app = _run_dashboard(database, monkeypatch)
+
+    assert not app.exception
+    traceability_kpis = _traceability_kpi_grid(app)
+    assert '<div class="kpi-label">Registros rastreáveis</div>' in traceability_kpis
+    assert '<div class="kpi-value">5</div>' in traceability_kpis
+    assert '<div class="kpi-label">Registros com alertas</div>' in traceability_kpis
+    assert '<div class="kpi-value">2</div>' in traceability_kpis
+
+    traceability = _traceability_table(app)
+    assert traceability.columns.tolist() == [
+        "Venda",
+        "Data",
+        "Alertas de qualidade",
+        "Marca",
+        "Modelo",
+        "Loja",
+        "UF",
+        "Consultor",
+        "Valor da venda",
+        "Valor de referência",
+        "Desconto (%)",
+        "Arquivo de origem",
+        "Linha de origem",
+    ]
+    alerts_by_sale = traceability.set_index("Venda")["Alertas de qualidade"]
+    assert alerts_by_sale["S5"] == "Sem alertas"
+    assert alerts_by_sale["S1"] == "Sem alertas"
+    assert alerts_by_sale["S2"] == "orphan_consultor_id"
+    assert any(
+        "Cada venda preserva o arquivo e a linha de origem" in caption.value
+        for caption in app.caption
+    )
+
+
+@pytest.mark.parametrize(
+    ("query", "expected_sales"),
+    [
+        ("s2", {"S2"}),
+        ("bRuNo", {"S2"}),
+        ("centro", {"S1", "S3"}),
+        ("modelo 4", {"S4"}),
+    ],
+)
+def test_traceability_searches_business_fields_case_insensitively(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    query: str,
+    expected_sales: set[str],
+) -> None:
+    database = tmp_path / f"traceability-search-{query.replace(' ', '-')}.duckdb"
+    _create_analytical_database(database)
+    app = _run_dashboard(database, monkeypatch)
+
+    app.text_input("traceability_search").set_value(query).run()
+
+    assert not app.exception
+    assert _traceability_sales(app) == expected_sales
+    count = len(expected_sales)
+    label = "registro rastreável" if count == 1 else "registros rastreáveis"
+    assert f"**{count} {label}**" in [markdown.value for markdown in app.markdown]
+
+
+def test_traceability_search_handles_no_result(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    database = tmp_path / "traceability-no-result.duckdb"
+    _create_analytical_database(database)
+    app = _run_dashboard(database, monkeypatch)
+
+    app.text_input("traceability_search").set_value("venda inexistente").run()
+
+    assert not app.exception
+    assert _traceability_table(app).empty
+    assert "**0 registros rastreáveis**" in [
+        markdown.value for markdown in app.markdown
+    ]
+    assert "Nenhuma venda corresponde aos critérios de investigação." in [
+        info.value for info in app.info
+    ]
+
+
+@pytest.mark.parametrize(
+    ("quality_filter", "expected_sales"),
+    [
+        ("Com alerta", {"S2", "S4"}),
+        ("Sem alerta", {"S1", "S3", "S5"}),
+    ],
+)
+def test_traceability_filters_records_by_alert_presence(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    quality_filter: str,
+    expected_sales: set[str],
+) -> None:
+    database = tmp_path / f"traceability-{quality_filter.replace(' ', '-')}.duckdb"
+    _create_analytical_database(database)
+    app = _run_dashboard(database, monkeypatch)
+
+    app.selectbox("traceability_quality_filter").set_value(quality_filter).run()
+
+    assert not app.exception
+    assert _traceability_sales(app) == expected_sales
+    assert _quality_table(app)["Regra"].nunique() == 5
+
+
+@pytest.mark.parametrize(
+    ("sort_option", "expected_order"),
+    [
+        ("Data mais recente", ["S5", "S4", "S3", "S2", "S1"]),
+        ("Data mais antiga", ["S1", "S2", "S3", "S4", "S5"]),
+        ("Maior valor de venda", ["S4", "S3", "S5", "S2", "S1"]),
+        ("Menor valor de venda", ["S1", "S2", "S5", "S3", "S4"]),
+    ],
+)
+def test_traceability_sorts_the_investigated_records(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    sort_option: str,
+    expected_order: list[str],
+) -> None:
+    database = tmp_path / f"traceability-sort-{sort_option.replace(' ', '-')}.duckdb"
+    _create_analytical_database(database)
+    app = _run_dashboard(database, monkeypatch)
+
+    app.selectbox("traceability_sort").set_value(sort_option).run()
+
+    assert not app.exception
+    assert _traceability_table(app)["Venda"].tolist() == expected_order
+
+
+def test_traceability_export_reflects_the_current_investigation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    database = tmp_path / "traceability-export.duckdb"
+    _create_analytical_database(database)
+    app = _run_dashboard(database, monkeypatch)
+    initial_download = next(
+        button
+        for button in app.get("download_button")
+        if button.label == "Baixar dados investigados"
+    )
+
+    app.text_input("traceability_search").set_value("S2")
+    app.selectbox("traceability_quality_filter").set_value("Com alerta")
+    app.run()
+
+    assert not app.exception
+    filtered_download = next(
+        button
+        for button in app.get("download_button")
+        if button.label == "Baixar dados investigados"
+    )
+    assert _traceability_table(app)["Venda"].tolist() == ["S2"]
+    assert filtered_download.url.endswith(".csv")
+    assert filtered_download.url != initial_download.url
+
+
+def test_traceability_filters_persist_in_dark_mode(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    database = tmp_path / "traceability-dark.duckdb"
+    _create_analytical_database(database)
+    app = _run_dashboard(database, monkeypatch)
+
+    app.text_input("traceability_search").set_value("s2")
+    app.selectbox("traceability_quality_filter").set_value("Com alerta")
+    app.selectbox("traceability_sort").set_value("Menor valor de venda")
+    app.run()
+    light_traceability = _traceability_table(app).copy()
+
+    app.sidebar.toggle("dark_mode").set_value(True).run()
+
+    assert not app.exception
+    assert app.text_input("traceability_search").value == "s2"
+    assert app.selectbox("traceability_quality_filter").value == "Com alerta"
+    assert app.selectbox("traceability_sort").value == "Menor valor de venda"
+    assert _traceability_table(app).equals(light_traceability)
 
 
 def test_dashboard_starts_with_dynamic_filter_options_and_all_sales(
