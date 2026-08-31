@@ -60,19 +60,32 @@ data/incoming/
 
 ### 5. Executar pipeline e dashboard
 
-O launcher é a forma mais simples de executar a solução. Informe o nome do ZIP quando houver mais de um arquivo em `data/incoming/`:
-
-```powershell
-.\.venv\Scripts\python.exe app.py --zip "teste_candidatos.zip"
-```
-
-O `app.py` executa o pipeline e só abre o dashboard se o processamento terminar com sucesso. Com um único ZIP na pasta, também é possível executar:
+O launcher é a forma recomendada para uso manual:
 
 ```powershell
 .\.venv\Scripts\python.exe app.py
 ```
 
-Com zero ZIPs o launcher informa erro; com mais de um, exige `--zip` para não escolher uma entrada silenciosamente. Para listar as opções disponíveis:
+Se houver apenas um ZIP em `data/incoming/`, ele será selecionado automaticamente. Com vários arquivos, o terminal apresentará um menu numérico:
+
+```text
+Selecione o arquivo que deseja processar:
+
+[1] automated_sales_pipeline.zip
+[2] teste_pipeline_sintetico.zip
+
+[0] Sair
+```
+
+Após a seleção, o pipeline será executado e o dashboard abrirá somente se o processamento terminar com sucesso. Com zero ZIPs, o launcher informa o problema e encerra.
+
+Para automação ou escolha explícita, preserve o uso de `--zip`:
+
+```powershell
+.\.venv\Scripts\python.exe app.py --zip "teste_candidatos.zip"
+```
+
+Para apenas listar os arquivos disponíveis:
 
 ```powershell
 .\.venv\Scripts\python.exe app.py --list
@@ -159,7 +172,7 @@ Os artefatos gerados não são versionados. Eles podem ser reconstruídos a part
 
 | Arquivo | Responsabilidade |
 |---|---|
-| `app.py` | Seleciona explicitamente o ZIP, executa o build com o mesmo Python da sessão e abre o dashboard após sucesso. |
+| `app.py` | Seleciona o ZIP automaticamente, por menu ou por `--zip`, executa o build e abre o dashboard após sucesso. |
 | `pipeline.py` | Protege a fronteira de entrada, descobre arquivos, valida ZIP/CSV/schema e adiciona arquivo e linha de origem. |
 | `build_pipeline.py` | Combina, normaliza, aplica qualidade, relaciona dimensões, calcula métricas e publica os artefatos. |
 | `dashboard.py` | Consulta o DuckDB em modo somente leitura e apresenta KPIs, filtros, gráficos, qualidade e rastreabilidade. |
@@ -394,5 +407,5 @@ Essas fronteiras mantêm a entrega proporcional ao desafio. Evoluções como pro
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
 .\.venv\Scripts\python.exe -m pytest -q
-.\.venv\Scripts\python.exe app.py --zip "teste_candidatos.zip"
+.\.venv\Scripts\python.exe app.py
 ```

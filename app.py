@@ -11,21 +11,46 @@ PIPELINE_SCRIPT = ROOT / "build_pipeline.py"
 DASHBOARD_SCRIPT = ROOT / "dashboard.py"
 
 
-def find_zip(requested_name: str | None = None) -> Path:
-    """Resolve an explicit ZIP or select the only ZIP in the input directory.
-
-    Automatic selection is intentionally limited to one available ZIP. When
-    multiple inputs exist, the caller must choose one with ``--zip``.
-    """
+def discover_zips() -> list[Path]:
+    """Return available ZIP files ordered from newest to oldest."""
 
     if not INCOMING_DIR.exists():
         raise FileNotFoundError(f"Pasta de entrada não encontrada: {INCOMING_DIR}")
 
-    zip_files = sorted(
+    return sorted(
         INCOMING_DIR.glob("*.zip"),
         key=lambda path: path.stat().st_mtime,
         reverse=True,
     )
+
+
+def select_zip_interactively(zip_files: list[Path]) -> Path | None:
+    """Prompt for one ZIP and return ``None`` when the user chooses to exit."""
+
+    print("\nAutomated Sales Pipeline\n")
+    print("Selecione o arquivo que deseja processar:\n")
+    for index, path in enumerate(zip_files, start=1):
+        print(f"[{index}] {path.name}")
+    print("\n[0] Sair\n")
+
+    while True:
+        try:
+            choice = int(input("Digite o número do arquivo: "))
+        except ValueError:
+            choice = -1
+
+        if choice == 0:
+            return None
+        if 1 <= choice <= len(zip_files):
+            return zip_files[choice - 1]
+
+        print(f"Opção inválida. Escolha um número entre 0 e {len(zip_files)}.")
+
+
+def find_zip(requested_name: str | None = None) -> Path | None:
+    """Resolve an explicit ZIP or select an available ZIP for manual use."""
+
+    zip_files = discover_zips()
 
     if requested_name:
         requested = Path(requested_name)
@@ -51,11 +76,7 @@ def find_zip(requested_name: str | None = None) -> Path:
     if len(zip_files) == 1:
         return zip_files[0]
 
-    available = ", ".join(path.name for path in zip_files)
-    raise ValueError(
-        f"{len(zip_files)} ZIPs encontrados em {INCOMING_DIR}. "
-        f"Informe --zip explicitamente. Disponíveis: {available}"
-    )
+    return select_zip_interactively(zip_files)
 
 
 def run_pipeline(zip_path: Path) -> None:
@@ -95,15 +116,11 @@ def open_dashboard() -> None:
 def list_zips() -> None:
     """Print the ZIP files currently available in the input directory."""
 
-    if not INCOMING_DIR.exists():
-        print(f"Pasta não encontrada: {INCOMING_DIR}")
+    try:
+        zip_files = discover_zips()
+    except FileNotFoundError as exc:
+        print(exc)
         return
-
-    zip_files = sorted(
-        INCOMING_DIR.glob("*.zip"),
-        key=lambda path: path.stat().st_mtime,
-        reverse=True,
-    )
 
     if not zip_files:
         print("Nenhum ZIP encontrado.")
@@ -127,8 +144,8 @@ def parse_args() -> argparse.Namespace:
         "--zip",
         dest="zip_name",
         help=(
-            "ZIP específico a processar. Se omitido, a pasta deve conter "
-            "exatamente um ZIP."
+            "ZIP específico a processar. Se omitido e houver vários ZIPs, "
+            "será exibido um menu para seleção."
         ),
     )
     parser.add_argument(
@@ -158,6 +175,9 @@ def main() -> int:
 
     try:
         zip_path = find_zip(args.zip_name)
+        if zip_path is None:
+            print("[app] Execução cancelada.")
+            return 0
         run_pipeline(zip_path)
         open_dashboard()
         return 0
