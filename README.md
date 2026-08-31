@@ -1,373 +1,380 @@
 # Automated Sales Pipeline
 
-Pipeline local e reproduzível para receber, validar, consolidar e disponibilizar os dados fictícios de vendas do desafio **Automated Sales Pipeline — 20260825**.
+Pipeline local e reproduzível para receber arquivos comerciais, validar sua estrutura, tratar problemas de qualidade, consolidar vendas e disponibilizar dados confiáveis para análise. A solução preserva a origem, separa registros rejeitados em quarentena e publica uma camada analítica em DuckDB e Parquet. A execução e o dashboard funcionam localmente no Windows, sem servidor de banco de dados ou infraestrutura em nuvem.
 
-**Estado atual:** as Fases 2A–2E estão concluídas, com ingestão segura, tratamento em Pandas, regras de qualidade financeira, persistência em DuckDB/Parquet, quarentena, camada analítica, dashboard Streamlit e exportação CSV prontos para entrega local. Não há cloud, Docker, banco externo, autenticação ou MCP.
-
-## Mapeamento do desafio
-
-| Requisito | Implementação atual | Verificação |
-| --- | --- | --- |
-| Receber os arquivos | `pipeline.py` aceita ZIP, CSV ou diretório local, valida formato e não modifica a origem. | Testes de ingestão segura e hash do ZIP. |
-| Compreender e relacionar estruturas | Quatro schemas conhecidos são consolidados; vendas são relacionadas a consultores, lojas e veículos. | Testes de schema, joins e integridade referencial. |
-| Identificar qualidade | Catálogo explícito com 20 regras, severidade, condição, tratamento e motivo. | `quality_report.csv`, tabela `quality_report` e testes artificiais. |
-| Realizar tratamentos | Limpeza textual, IDs normalizados, três formatos de data, dinheiro decimal, deduplicação e separação entre desconto e ágio. | Testes de datas, centavos, duplicatas, regras financeiras e resultados reais. |
-| Consolidar informações | Fato de vendas, dimensões e mart mensal persistidos em DuckDB local. | Contagens e agregações consultadas após cada execução controlada. |
-| Gerar camada analítica | `fact_sales_pipeline.parquet`, tabelas DuckDB e relatório de qualidade. | Schema monetário `DECIMAL`, leitura DuckDB e Parquet testadas. |
-| Permitir reexecuções | CLI com destinos explícitos, staging e publicação com rollback. | Duas execuções produzem o mesmo conteúdo lógico e os mesmos hashes de CSV/Parquet. |
-| Disponibilizar análise | Dashboard Streamlit com KPIs, filtros, gráficos, qualidade, rastreabilidade e download. | Teste do caso vazio e validação local do dashboard. |
-| Organizar e documentar | Estrutura simples, comandos Windows, segurança, dependências e uso de IA documentados. | Pytest, Ruff, pip-audit e `git diff --check`. |
-
-## Arquitetura
+## Visão geral da solução
 
 ```text
-ZIP/CSV/diretório (somente leitura)
-        |
-        v
-pipeline.py: descoberta, limites, schemas e rastreabilidade
-        |
-        v
-build_pipeline.py: normalização, regras, joins e métricas
-        |
-        +--> data/output/       DuckDB, Parquet e quality_report.csv
-        +--> data/quarantine/   rejected_sales.csv
-                    |
-                    +--> dashboard.py / export_csv.py
+Arquivos de entrada
+        ↓
+Ingestão segura
+        ↓
+Validação estrutural e normalização
+        ↓
+Regras de qualidade
+        ↓
+Vendas válidas + quarentena/avisos
+        ↓
+Relacionamento com lojas, veículos e consultores
+        ↓
+Camada analítica
+        ↓
+DuckDB + Parquet
+        ↓
+Dashboard Streamlit / exportação CSV
 ```
 
-Os artefatos são gerados primeiro em diretórios temporários no mesmo volume. A publicação usa substituições de arquivo e restaura a versão anterior se uma substituição falhar durante o processo.
+Git, testes automatizados, rastreabilidade, documentação e práticas de DevOps/DevSecOps acompanham todo o fluxo. A linha de raciocínio foi preservar e compreender os dados antes de transformá-los: **entender → implementar → testar → observar → corrigir → versionar → avançar**.
 
-## Estrutura relevante
+## Início rápido
 
-```text
-.
-├── data/
-│   ├── incoming/       # entrada original local e imutável
-│   ├── output/         # banco, Parquet e relatório gerados
-│   └── quarantine/     # vendas rejeitadas
-├── docs/
-│   └── challenge.md
-├── tests/
-├── app.py
-├── build_pipeline.py
-├── dashboard.py
-├── export_csv.py
-├── pipeline.py
-├── requirements.txt
-└── SECURITY.md
-```
+As instruções abaixo usam Windows e PowerShell. Não é necessário ativar manualmente o ambiente virtual porque os comandos chamam diretamente o Python da `.venv`.
 
-Dados, bancos e resultados são ignorados pelo Git; somente os arquivos `.gitkeep` preservam os diretórios.
-
-## Entrada e ingestão segura
-
-O pacote original esperado é:
-
-```text
-data/incoming/Teste_Tecnico_Dados_Candidato_20260825.zip
-```
-
-SHA-256 conhecido:
-
-```text
-06BE13B4E818849568965B0E3E7BA64F9EDC78BE8D8207C9A088C35773D60DAD
-```
-
-A ingestão aceita UTF-8 com ou sem BOM e delimitador `;`. Ela valida os schemas exatos de `consultores`, `lojas`, `veiculos` e `vendas`, preserva todas as colunas recebidas como texto e adiciona `__source_file` e `__source_line` em memória. ZIP Slip, links, junctions, arquivos especiais, colisões de caminhos, conteúdo inesperado, CRC, compressão e limites de tamanho são verificados antes do uso.
-
-Inspeção sem gerar outputs:
+### 1. Clonar e entrar no projeto
 
 ```powershell
-.\.venv\Scripts\python.exe pipeline.py inspect "data\incoming\Teste_Tecnico_Dados_Candidato_20260825.zip"
+git clone <URL-do-repositorio>
+cd automated-sales-pipeline-final
 ```
 
-## Ambiente no Windows
-
-Pré-requisito: Python 3.14.5. Confirme a versão antes de criar o ambiente:
+### 2. Criar o ambiente virtual
 
 ```powershell
-python --version
 python -m venv .venv
+```
+
+### 3. Instalar as dependências
+
+```powershell
 .\.venv\Scripts\python.exe -m pip install --upgrade pip
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
 ```
 
-Não é necessário ativar a `.venv`; os comandos usam o executável diretamente. Se uma `.venv` existente mostrar outra versão, recrie-a somente após preservar qualquer configuração local necessária.
+### 4. Colocar a entrada no projeto
 
-## Executar o pipeline
-
-```powershell
-.\.venv\Scripts\python.exe build_pipeline.py `
-  "data\incoming\Teste_Tecnico_Dados_Candidato_20260825.zip" `
-  --output "data\output" `
-  --quarantine "data\quarantine"
-```
-
-O launcher executa o mesmo pipeline e abre o dashboard após uma execução bem-sucedida:
-
-```powershell
-.\.venv\Scripts\python.exe app.py --zip "Teste_Tecnico_Dados_Candidato_20260825.zip"
-```
-
-Sem `--zip`, a seleção é automática somente quando existe exatamente um ZIP em
-`data/incoming/`. Com vários ZIPs, informe o arquivo explicitamente; use
-`.\.venv\Scripts\python.exe app.py --list` para listar as opções.
-
-Saídas publicadas:
-
-- `data/output/sales_pipeline.duckdb`;
-- `data/output/fact_sales_pipeline.parquet`;
-- `data/output/quality_report.csv`;
-- `data/quarantine/rejected_sales.csv`.
-
-Tabelas DuckDB:
-
-- `raw_vendas`;
-- `dim_consultores`, `dim_lojas`, `dim_veiculos`;
-- `fact_vendas`;
-- `rejected_sales`;
-- `quality_report`;
-- `mart_vendas_mensal`.
-
-Campos monetários da fato e do Parquet usam `DECIMAL(18,2)`; percentuais persistidos usam `DECIMAL(9,4)`. Entradas monetárias com mais de duas casas decimais não são arredondadas silenciosamente: são classificadas como inválidas.
-
-## Camada analítica
-
-Depois das validações, somente as vendas aprovadas formam `fact_vendas`. A fato
-mantém os identificadores de venda, veículo, loja e consultor; data da venda;
-atributos de loja (`loja`, `cidade`, `uf`), consultor e veículo (`marca`, `modelo`);
-valores de referência e venda; desconto concedido, ágio e variação líquida derivados;
-campos de qualidade e origem.
-Isso atende às análises do desafio sem introduzir outro modelo dimensional.
-
-O fluxo permanece direto:
+Copie o ZIP recebido para:
 
 ```text
-vendas válidas → fact_vendas/Parquet → mart e KPIs → dashboard
+data/incoming/
 ```
 
-| KPI | Fórmula | Origem | Ausência de dados |
-| --- | --- | --- | --- |
-| Faturamento | `SUM(valor_venda)` | `fact_vendas` | venda sem valor válido não entra na fato |
-| Quantidade de vendas | `COUNT(*)` | `fact_vendas` | zero quando a fato ou o filtro está vazio |
-| Ticket médio | `SUM(valor_venda) / COUNT(*)` | fato e mart | não calculado sem vendas |
-| Desconto concedido | `MAX(valor_referencia - valor_venda, 0)` | fato, mart e dashboard | nulo sem referência; nunca é negativo |
-| Ágio sobre a referência | `MAX(valor_venda - valor_referencia, 0)` | fato e mart | nulo sem referência; nunca é negativo |
-| Variação líquida contra referência | `desconto_concedido - agio_referencia` | fato e mart | pode ser positiva, negativa ou zero |
-| Desconto ponderado | `SUM(desconto_concedido) / SUM(valor_referencia das vendas com desconto) * 100` | mart | considera no denominador somente linhas onde `valor_venda < valor_referencia`; fica nulo sem vendas com desconto |
+### 5. Executar pipeline e dashboard
 
-O desconto ponderado usa somente vendas que efetivamente ficaram abaixo da referência
-no numerador e no denominador; não é a média simples dos percentuais de cada venda.
-Vendas acima da referência geram ágio e nunca cancelam descontos concedidos.
+O launcher é a forma mais simples de executar a solução. Informe o nome do ZIP quando houver mais de um arquivo em `data/incoming/`:
 
-`mart_vendas_mensal` agrega a fato por mês, marca, loja e UF. Ele contém quantidade,
-receita, ticket médio, desconto concedido total, ágio total, variação líquida e
-desconto percentual ponderado, preservando `DECIMAL` nas métricas financeiras. O
-dashboard consulta a fato para permitir os mesmos cálculos após filtros interativos;
-o Parquet materializa a mesma fato do DuckDB.
+```powershell
+.\.venv\Scripts\python.exe app.py --zip "teste_candidatos.zip"
+```
 
-## Regras de qualidade
+O `app.py` executa o pipeline e só abre o dashboard se o processamento terminar com sucesso. Com um único ZIP na pasta, também é possível executar:
 
-O catálogo possui 20 regras: 14 `error` e 6 `warning`. Cada entrada de
-`build_pipeline.QUALITY_RULES` declara `rule_id`, descrição, dataset, severidade,
-condição, tratamento, justificativa e se invalida uma venda. Esses mesmos campos
-compõem o `quality_report`.
+```powershell
+.\.venv\Scripts\python.exe app.py
+```
 
-- Em `vendas`, `error` significa que a linha não é confiável para a fato. A regra
-  marca `invalidates_sale=true`, registra o `rule_id` em `quality_issues` e envia a
-  linha à quarentena.
-- Em dimensões, `error` qualifica as ocorrências duplicadas da origem. Elas não são
-  carregadas em conjunto: somente a ocorrência canônica segue para os joins, sem
-  invalidar automaticamente vendas que apontam para esse ID.
-- `warning` registra uma anomalia relevante em `quality_issues`, mas preserva a
-  venda na fato. Não há correção automática do valor suspeito.
+Com zero ZIPs o launcher informa erro; com mais de um, exige `--zip` para não escolher uma entrada silenciosamente. Para listar as opções disponíveis:
 
-As regras são avaliadas de forma independente sobre os dados normalizados. Assim,
-uma linha pode conter vários `rule_id` separados por `|`, e o `failed_rows` de cada
-regra inclui todas as linhas afetadas, mesmo quando elas também são rejeitadas por
-outra regra.
+```powershell
+.\.venv\Scripts\python.exe app.py --list
+```
 
-| Regra | Severidade | Tratamento | Ocorrências na validação da Fase 2E |
-| --- | --- | --- | ---: |
-| `duplicate_consultor_id` | error | manter primeiro cadastro | 0 |
-| `duplicate_loja_id` | error | manter primeiro cadastro | 0 |
-| `duplicate_veiculo_id` | error | manter primeiro cadastro | 0 |
-| `missing_venda_id` | error | rejeitar venda | 0 |
-| `duplicate_venda_id` | error | manter primeira venda e rejeitar posteriores | 174 |
-| `invalid_data_venda` | error | rejeitar venda | 69 |
-| `future_data_venda` | warning | manter com aviso | 0 |
-| `invalid_valor_venda` | error | rejeitar venda | 289 |
-| `negative_valor_venda` | error | rejeitar venda | 35 |
-| `zero_valor_venda` | error | rejeitar venda | 34 |
-| `suspicious_valor_venda_placeholder` | error | rejeitar venda | 44 |
-| `invalid_valor_referencia` | warning | manter com aviso | 0 |
-| `missing_veiculo_id` | error | rejeitar venda | 0 |
-| `orphan_veiculo_id` | error | rejeitar venda | 58 |
-| `missing_loja_id` | error | rejeitar venda | 0 |
-| `orphan_loja_id` | error | rejeitar venda | 58 |
-| `missing_consultor_id` | warning | manter com aviso | 0 |
-| `orphan_consultor_id` | warning | manter com aviso | 117 |
-| `consultor_loja_mismatch` | warning | manter com aviso | 58 |
-| `veiculo_multiple_sales` | warning | manter com aviso | 406 |
+### 6. Executar os componentes separadamente
 
-### Política de duplicatas
+Pipeline:
 
-A ordem consolidada é determinística: os arquivos ingeridos são ordenados pelo
-nome de origem, e a ordem das linhas de cada CSV é preservada. A primeira
-ocorrência nessa sequência é a ocorrência canônica.
+```powershell
+.\.venv\Scripts\python.exe build_pipeline.py "data/incoming/teste_candidatos.zip" --output "data/output" --quarantine "data/quarantine"
+```
 
-| Chave | Ocorrência canônica | Demais ocorrências | Contagem no relatório |
-| --- | --- | --- | --- |
-| `venda_id` | permanece candidata à fato | rejeitadas como `duplicate_venda_id` | somente ocorrências posteriores |
-| `consultor_id` | compõe `dim_consultores` | não entram na dimensão | todas as ocorrências do ID duplicado |
-| `loja_id` | compõe `dim_lojas` | não entram na dimensão | todas as ocorrências do ID duplicado |
-| `veiculo_id` | compõe `dim_veiculos` | não entram na dimensão | todas as ocorrências do ID duplicado |
-
-As regras continuam independentes: a ocorrência canônica de uma venda ainda pode
-ser rejeitada se falhar em outro `error`.
-
-### Integridade referencial e quarentena
-
-| Relação | Falha | Decisão | Fato e relatório |
-| --- | --- | --- | --- |
-| venda → veículo | ID ausente ou órfão | `error` | rejeita; registra a regra no `quality_report` e em `quality_issues` |
-| venda → loja | ID ausente ou órfão | `error` | rejeita; registra a regra no `quality_report` e em `quality_issues` |
-| venda → consultor | ID ausente ou órfão | `warning` | mantém a venda; atributos não resolvidos ficam nulos e a regra é registrada |
-| consultor → loja da venda | lojas divergentes para consultor conhecido | `warning` | mantém a venda como possível operação cruzada e registra `consultor_loja_mismatch` |
-
-`data/quarantine/rejected_sales.csv` recebe a linha quando ao menos um `error` de
-`vendas` a invalida. Duplicatas de dimensão aparecem no relatório, mas não enviam
-por si sós uma venda à quarentena.
-
-### Valor zero
-
-Uma venda com `valor_venda = 0` não representa uma transação comercial válida,
-portanto é registrada por uma regra `error` própria e enviada à quarentena. O valor
-original continua disponível para rastreabilidade.
-
-### Valor 9.999.999
-
-O valor exato `9.999.999` aparece repetidamente como extremo incompatível com os
-valores de referência e sem venda comercial comparável nos arquivos fornecidos. Ele
-é tratado como anomalia/placeholder específico desta fonte, não como limite universal
-para outros datasets.
-
-### Limitações das regras
-
-- `veiculo_multiple_sales` não prova duplicidade nem fraude; pode representar
-  revenda ou recorrência e, sem contexto adicional, permanece `warning`.
-- `consultor_loja_mismatch` pode representar venda cruzada legítima; não há base de
-  negócio para rejeitar ou corrigir a loja.
-- Uma venda com consultor ausente ou órfão ainda conserva veículo, loja e valor;
-  por isso permanece utilizável com `warning`.
-- O vínculo `consultor → loja` não possui uma regra independente para loja ausente
-  no cadastro do consultor. O catálogo atual somente compara a loja conhecida do
-  consultor com a loja da venda; ampliar essa política exige requisito de negócio.
-- A seleção canônica de duplicatas não tenta reconciliar campos conflitantes: ela
-  preserva a primeira ocorrência rastreável e expõe todas as duplicatas no relatório.
-
-## Resultado controlado da Fase 2E
-
-Execução em Python 3.14.5 com o ZIP original somente leitura:
-
-| Métrica | Baseline aprovado | Depois da correção |
-| --- | ---: | ---: |
-| Vendas recebidas | 115.879 | 115.879 |
-| Vendas válidas | 115.198 | 115.121 |
-| Vendas rejeitadas | 681 | 758 |
-| Faturamento válido | R$ 32.987.527.556,00 | R$ 32.547.527.600,00 |
-| Ticket médio | R$ 286.355,0370 | R$ 282.724,5037829762 |
-
-As 34 ocorrências de valor zero incluem uma venda já rejeitada por outra regra crítica,
-portanto geram 33 novas rejeições. As 44 ocorrências do placeholder geram outras 44,
-totalizando a redução de 77 vendas válidas sem alterar datas, duplicatas ou órfãos.
-
-| KPI financeiro corrigido | Resultado |
-| --- | ---: |
-| Desconto concedido | R$ 751.462.600,00 |
-| Ágio sobre a referência | R$ 253.100.900,00 |
-| Variação líquida contra referência | R$ 498.361.700,00 |
-| Desconto ponderado | 3,4145% |
-
-## Dashboard e exportação
-
-Execute o dashboard atual, preservado em Streamlit:
+Dashboard, após a criação do banco:
 
 ```powershell
 .\.venv\Scripts\python.exe -m streamlit run dashboard.py
 ```
 
-Ele lê `data/output/sales_pipeline.duckdb` em modo somente leitura. Para testes ou outro banco local:
-
-```powershell
-$env:SALES_PIPELINE_DB_PATH = "C:\caminho\sales_pipeline.duckdb"
-.\.venv\Scripts\python.exe -m streamlit run dashboard.py
-```
-
-O modo claro permanece como padrão; use o toggle `🌙 Modo escuro`, no topo da
-sidebar, para alternar o tema sem modificar filtros, KPIs ou dados.
-
-Uma `fact_vendas` vazia mostra uma mensagem controlada antes de construir o filtro de datas.
-O quarto card apresenta **Desconto concedido** — aproximadamente R$ 751,5 milhões
-no conjunto completo — sem compensá-lo com vendas acima da referência. Faturamento,
-vendas e ticket médio continuam nos outros três cards.
-
-Exportação completa da fato para CSV, sem efeitos colaterais no import:
+Exportação opcional da fato completa para CSV:
 
 ```powershell
 .\.venv\Scripts\python.exe export_csv.py
 ```
 
-## Verificações
+### 7. Verificar o projeto
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest -q
+```
+
+A suíte usa dados temporários próprios e não depende do ZIP oficial.
+
+## Pré-requisitos
+
+- Windows com PowerShell;
+- Python compatível com as versões fixadas em `requirements.txt`;
+- espaço local para o ambiente e os artefatos gerados.
+
+O projeto foi desenvolvido e validado com **Python 3.14.5**. Essa é a versão de referência usada na entrega, não uma regra de negócio do pipeline.
+
+## Como o desafio foi atendido
+
+| Objetivo do desafio | Implementação |
+|---|---|
+| Receber | `pipeline.py` aceita ZIP, diretório ou CSV para ingestão e inspeção. |
+| Compreender | Quatro schemas explícitos identificam vendas, lojas, veículos e consultores. |
+| Validar | Estrutura, tipos e 20 regras de qualidade são avaliados antes da publicação. |
+| Tratar | Textos, IDs, datas, números e dinheiro são normalizados por regras explícitas. |
+| Consolidar | Vendas aprovadas são relacionadas às dimensões em `fact_vendas`. |
+| Disponibilizar | DuckDB, Parquet, relatórios, dashboard e CSV opcional atendem usos analíticos. |
+| Executar novamente | A mesma entrada reconstrói logicamente os outputs; novos lotes percorrem o mesmo fluxo. |
+
+## Entrada dos dados
+
+O pacote completo deve reunir os quatro conjuntos abaixo:
+
+| Conteúdo | Caminho esperado no pacote |
+|---|---|
+| Consultores | `dados/dimensoes/dim_consultores.csv` |
+| Lojas | `dados/dimensoes/dim_lojas.csv` |
+| Veículos | `dados/dimensoes/dim_veiculos.csv` |
+| Vendas | `dados/vendas/vendas_*.csv` |
+
+Os CSVs usam `;`, UTF-8 ou UTF-8 com BOM e cabeçalhos exatos. A ingestão isolada consegue inspecionar um único CSV, mas o build completo precisa dos quatro schemas para construir os relacionamentos.
+
+A entrada original é aberta somente para leitura. Seu conteúdo em bytes e seu tamanho são preservados; metadados controlados pelo sistema operacional, como horário de acesso, não são garantidos pela aplicação. Arquivos derivados são gravados apenas em `data/output/` e `data/quarantine/`.
+
+## Saídas geradas
+
+| Artefato | Finalidade |
+|---|---|
+| `data/output/sales_pipeline.duckdb` | Banco analítico local com dados brutos, dimensões, fato, rejeições, qualidade e mart mensal. |
+| `data/output/fact_sales_pipeline.parquet` | Cópia colunar e portátil da `fact_vendas`, comprimida com ZSTD. |
+| `data/output/quality_report.csv` | Resultado das regras, com severidade, tratamento, justificativa, ocorrências e status. |
+| `data/quarantine/rejected_sales.csv` | Vendas rejeitadas, mantidas com motivos e origem para investigação. |
+| `data/output/fact_sales_pipeline.csv` | Exportação opcional da fato completa, criada por `export_csv.py`. |
+
+O DuckDB contém as tabelas `raw_vendas`, `dim_consultores`, `dim_lojas`, `dim_veiculos`, `fact_vendas`, `rejected_sales`, `quality_report` e `mart_vendas_mensal`.
+
+Os artefatos gerados não são versionados. Eles podem ser reconstruídos a partir da entrada e dos comandos documentados.
+
+## Arquitetura e responsabilidades
+
+| Arquivo | Responsabilidade |
+|---|---|
+| `app.py` | Seleciona explicitamente o ZIP, executa o build com o mesmo Python da sessão e abre o dashboard após sucesso. |
+| `pipeline.py` | Protege a fronteira de entrada, descobre arquivos, valida ZIP/CSV/schema e adiciona arquivo e linha de origem. |
+| `build_pipeline.py` | Combina, normaliza, aplica qualidade, relaciona dimensões, calcula métricas e publica os artefatos. |
+| `dashboard.py` | Consulta o DuckDB em modo somente leitura e apresenta KPIs, filtros, gráficos, qualidade e rastreabilidade. |
+| `export_csv.py` | Exporta a `fact_vendas` completa para CSV, também por conexão somente leitura. |
+| `tests/` | Exercita launcher, ingestão, regras, cálculos, persistência, dashboard, exportação e reexecução. |
+| `SECURITY.md` | Registra limites de confiança, controles implementados e riscos residuais. |
+| `docs/challenge.md` | Preserva o escopo funcional e os critérios de entrega do desafio. |
+
+`pipeline.py` e `build_pipeline.py` permanecem separados intencionalmente: o primeiro valida a entrada não confiável; o segundo contém decisões de transformação e negócio.
+
+## Principais decisões técnicas
+
+| Tecnologia ou prática | Por que foi escolhida |
+|---|---|
+| Python | Automatiza todo o fluxo com uma base de código local, legível e fácil de executar no Windows. |
+| Pandas | Mantém transformações tabulares e regras de qualidade explícitas e testáveis. |
+| NumPy | Apoia a composição vetorizada das marcações de qualidade, sem processamento linha a linha. |
+| DuckDB | Oferece SQL analítico e tipos decimais em um único arquivo, sem servidor externo. |
+| Parquet | Fornece uma saída colunar compacta, portátil e adequada para consumo analítico. |
+| Streamlit | Entrega uma interface local funcional sem exigir frontend, API ou implantação separada. |
+| Plotly | Produz gráficos interativos compatíveis com os filtros do dashboard. |
+| Pytest | Transforma regras e comportamentos esperados em verificações automatizadas. |
+| Ruff | Verifica erros estáticos, estilo e formatação do código. |
+| pip-audit | Consulta vulnerabilidades conhecidas nas dependências Python. |
+| Git | Registra mudanças e checkpoints de forma incremental e revisável. |
+
+NiceGUI permanece fixado em `requirements.txt` por herança da fundação inicial, mas não é importado pelo código entregue. A interface funcional usa Streamlit.
+
+### Por que a solução é local
+
+Para o volume e o objetivo do desafio, AWS, GCP, Vercel, n8n, Make, banco remoto, Docker ou um orquestrador distribuído aumentariam configuração, custo, dependências e dificuldade de reprodução sem benefício proporcional. DuckDB, Parquet e Streamlit atendem ao caso com menos partes móveis e sem credenciais.
+
+O runtime não usa cloud, API externa, banco remoto, autenticação ou MCP. As ferramentas de IA descritas adiante participaram do desenvolvimento, não da execução do pipeline.
+
+## Qualidade dos dados
+
+O tratamento separa ocorrência, severidade e destino:
+
+- `error` em uma regra de venda que invalida o registro envia a linha para a quarentena;
+- `error` em duplicidade de dimensão qualifica o conjunto e usa a primeira ocorrência como referência, mas não rejeita automaticamente uma venda;
+- `warning` mantém a venda válida e registra a anomalia para análise;
+- `quality_issues` guarda todos os identificadores aplicáveis à linha, pois uma venda pode falhar em mais de uma regra;
+- a quarentena preserva os registros rejeitados em vez de apagá-los.
+
+### Regras executadas na base de referência
+
+| Regra | Severidade | Ocorrências | Tratamento principal |
+|---|---:|---:|---|
+| `duplicate_consultor_id` | error | 0 | Primeira ocorrência seria usada no relacionamento. |
+| `duplicate_loja_id` | error | 0 | Primeira ocorrência seria usada no relacionamento. |
+| `duplicate_veiculo_id` | error | 0 | Primeira ocorrência seria usada no relacionamento. |
+| `missing_venda_id` | error | 0 | Quarentena. |
+| `duplicate_venda_id` | error | 174 | Mantém a primeira venda e envia posteriores à quarentena. |
+| `invalid_data_venda` | error | 69 | Quarentena. |
+| `future_data_venda` | warning | 0 | Mantém a venda e sinaliza. |
+| `invalid_valor_venda` | error | 289 | Quarentena. |
+| `negative_valor_venda` | error | 35 | Quarentena. |
+| `zero_valor_venda` | error | 34 | Quarentena. |
+| `suspicious_valor_venda_placeholder` | error | 44 | Quarentena para o sentinel específico da fonte. |
+| `invalid_valor_referencia` | warning | 0 | Mantém a venda e sinaliza. |
+| `missing_veiculo_id` | error | 0 | Quarentena. |
+| `orphan_veiculo_id` | error | 58 | Quarentena. |
+| `missing_loja_id` | error | 0 | Quarentena. |
+| `orphan_loja_id` | error | 58 | Quarentena. |
+| `missing_consultor_id` | warning | 0 | Mantém a venda e sinaliza. |
+| `orphan_consultor_id` | warning | 117 | Mantém a venda e sinaliza. |
+| `consultor_loja_mismatch` | warning | 58 | Mantém a venda e sinaliza. |
+| `veiculo_multiple_sales` | warning | 406 | Mantém as vendas e sinaliza. |
+
+O catálogo possui **20 regras: 14 `error` e 6 `warning`**. As ocorrências podem se sobrepor na mesma linha; por isso a soma de `failed_rows` não equivale ao total de vendas rejeitadas.
+
+### Tratamentos que exigiram decisão explícita
+
+- Datas são aceitas somente nos formatos conhecidos `AAAA-MM-DD`, `AAAA/MM/DD` e `DD/MM/AAAA`; datas impossíveis não são corrigidas por adivinhação.
+- Dinheiro é processado com `Decimal` no Python e `DECIMAL` no DuckDB/Parquet para preservar centavos.
+- `valor_venda = 0` é rejeitado porque não representa uma venda comercial válida para os KPIs deste desafio.
+- `valor_venda = 9.999.999` é tratado como sentinel/placeholder desta fonte após a análise da distribuição e das referências. Essa regra deve ser revista se a origem mudar.
+- Duplicatas seguem ordem determinística: arquivos por nome e linhas pela posição física; a primeira ocorrência é a referência.
+
+### Métricas financeiras
+
+```text
+faturamento = soma(valor_venda)
+ticket médio = faturamento / quantidade de vendas válidas
+desconto concedido = max(valor_referencia - valor_venda, 0)
+ágio sobre a referência = max(valor_venda - valor_referencia, 0)
+variação líquida = desconto concedido - ágio
+```
+
+O desconto ponderado considera apenas vendas efetivamente abaixo da referência, tanto no numerador quanto no denominador. Desconto e ágio permanecem separados para que uma venda acima da referência não esconda desconto concedido em outra.
+
+## Resultado de referência
+
+Valores confirmados em modo somente leitura nos artefatos existentes para `teste_candidatos.zip`, cujo SHA-256 é `06BE13B4E818849568965B0E3E7BA64F9EDC78BE8D8207C9A088C35773D60DAD`:
+
+| Métrica | Resultado |
+|---|---:|
+| Vendas recebidas | 115.879 |
+| Vendas válidas | 115.121 |
+| Vendas rejeitadas | 758 |
+| Taxa de aprovação | 99,35% |
+| Faturamento | R$ 32.547.527.600,00 |
+| Ticket médio | R$ 282.724,50 |
+| Desconto concedido | R$ 751.462.600,00 |
+| Ágio sobre a referência | R$ 253.100.900,00 |
+| Variação líquida | R$ 498.361.700,00 |
+| Desconto ponderado | 3,4145% |
+
+As contagens e somas da fato foram comparadas logicamente entre DuckDB, Parquet e `mart_vendas_mensal`. Esses números pertencem à base fornecida; não são constantes fixas no sistema.
+
+## Dashboard
+
+O dashboard é uma camada de consulta: ele não executa nem altera o processamento. `dashboard.py` abre `sales_pipeline.duckdb` com `read_only=True` e oferece:
+
+- KPIs de faturamento, vendas, ticket médio e desconto concedido;
+- filtros por período, marca, loja, UF, canal, forma de pagamento e consultor;
+- gráficos de evolução mensal, marca, loja, canal e forma de pagamento;
+- tema claro e escuro;
+- aba de qualidade com volumes, taxa de aprovação, regras, filtros locais e download do relatório;
+- aba de rastreabilidade com busca, filtro de alertas, ordenação, arquivo/linha de origem e download dos dados investigados.
+
+O download do dashboard respeita a investigação atual. Já `export_csv.py` exporta a fato completa, sem filtros, para uso automatizável fora da interface.
+
+## Rastreabilidade
+
+Cada linha recebe os campos:
+
+- `__source_file`: arquivo de origem;
+- `__source_line`: linha física em que o registro começou;
+- `quality_issues`: regras de qualidade associadas.
+
+Esses campos seguem para a fato ou para a quarentena. Assim, se um número da camada analítica for questionado, é possível localizar a entrada correspondente e entender quais validações foram aplicadas. O arquivo original permanece preservado e os rejeitados continuam disponíveis para investigação.
+
+## Reexecução e reprodutibilidade
+
+Quando um novo pacote for recebido:
+
+1. coloque o ZIP em `data/incoming/`;
+2. execute `app.py --zip "<arquivo>.zip"`;
+3. o pipeline valida novamente a entrada e todas as regras;
+4. a camada analítica é reconstruída e publicada nos destinos documentados;
+5. o dashboard consulta o banco atualizado.
+
+Os testes comprovam **idempotência lógica** para a mesma entrada: contagens, schemas e métricas são reproduzidos. O hash físico do arquivo DuckDB não é usado como critério, pois detalhes internos do banco podem variar sem alterar seu conteúdo lógico.
+
+## Segurança e robustez da ingestão
+
+A entrada é tratada como não confiável antes de chegar às regras de negócio. Entre os controles implementados estão allowlist de caminhos, bloqueio de ZIP Slip, links e tipos especiais, validação de CRC, limites de arquivos/tamanho/compressão, UTF-8 estrito, delimitador e schema exatos. A publicação usa staging no mesmo volume e tenta restaurar o conjunto anterior quando uma substituição falha com erro capturado.
+
+O modelo de ameaça, os limites exatos e os riscos residuais estão em [`SECURITY.md`](SECURITY.md).
+
+## Testes e verificações
 
 ```powershell
 .\.venv\Scripts\python.exe -m pytest -q
 .\.venv\Scripts\python.exe -m ruff check .
 .\.venv\Scripts\python.exe -m ruff format --check .
+.\.venv\Scripts\python.exe -m pip check
 .\.venv\Scripts\python.exe -m pip_audit -r requirements.txt
 git diff --check
 ```
 
-Os testes usam somente fixtures artificiais e diretórios temporários. O ZIP e os outputs locais existentes não são usados como alvos destrutivos.
+- Pytest verifica os contratos funcionais e de integração.
+- Ruff verifica problemas estáticos e formatação.
+- `pip check` detecta incompatibilidades entre pacotes instalados.
+- `pip-audit` consulta vulnerabilidades conhecidas nas dependências.
+- `git diff --check` detecta erros de whitespace no diff.
 
-## Ferramentas de terceiros
+Na revisão desta entrega, a suíte atual executou **117 testes com sucesso**.
 
-| Ferramenta | Uso atual |
-| --- | --- |
-| Python 3.14.5 | Runtime e biblioteca padrão compatível com Windows. |
-| Pandas | Limpeza, normalização, validações, joins e DataFrames. |
-| NumPy | Composição vetorizada de marcações de qualidade. |
-| DuckDB | Persistência e consultas analíticas locais; geração do Parquet e CSV. |
-| Streamlit | Dashboard local existente. |
-| Plotly | Gráficos interativos do dashboard. |
-| NiceGUI | Dependência requerida na fundação; não substitui o dashboard Streamlit herdado nesta fase. |
-| Pytest | Caracterização, regressão e testes funcionais. |
-| Ruff | Lint e verificação de formatação. |
-| pip-audit | Consulta de vulnerabilidades conhecidas nas dependências. |
+## Metodologia de desenvolvimento
 
-## Uso de inteligência artificial
+O projeto usou como referência uma adaptação do ciclo DevOps/DevSecOps apresentado pela IBM; não é um projeto IBM, não utiliza infraestrutura IBM e não aplica um framework proprietário integralmente.
 
-- **Ferramenta:** OpenAI Codex (ChatGPT).
-- **Uso:** análise do desafio e da auditoria, criação dos testes de caracterização, implementação incremental do hardening, revisão de segurança e atualização documental.
-- **Controles:** código e decisões produzidos com apoio de IA foram revisados; regras e métricas foram verificadas por testes automatizados e por validações manuais do pipeline e do dashboard; o diff foi revisado antes dos commits.
-- **Dados:** nenhum arquivo do desafio foi enviado a serviço externo por esta implementação; a análise e os testes ocorreram no workspace local.
+O ciclo **Planejar → Programar → Construir → Testar → Lançar → Implementar → Operar → Monitorar** foi traduzido para o contexto do desafio como: planejar uma pequena evolução, implementar, testar, analisar os resultados, corrigir, versionar e avançar. Segurança foi incorporada desde a ingestão por meio da preservação da origem, validação antecipada, testes, Ruff, `pip-audit`, rastreabilidade e consumidores do banco em modo somente leitura.
 
-## Limitações atuais
+Referências metodológicas:
 
-- O hash físico do arquivo DuckDB pode mudar entre execuções, embora tabelas, contagens, agregações e demais artefatos permaneçam logicamente idempotentes.
-- A publicação restaura os arquivos anteriores em falhas capturadas durante a substituição; encerramento abrupto do processo ou perda de energia entre substituições ainda pode exigir recuperação pelos arquivos `.bak`.
-- Regras como venda anterior à admissão, quilometragem anômala e padronização semântica de marcas foram observadas, mas não foram adicionadas silenciosamente ao catálogo.
-- NiceGUI permanece como dependência original; a interface funcional atual é Streamlit e não foi redesenhada nesta fase.
+- [IBM — Ciclo de vida de DevOps](https://www.ibm.com/br-pt/think/topics/devops-lifecycle)
+- [IBM — DevSecOps](https://www.ibm.com/br-pt/think/topics/devsecops)
 
-## Como explicar o projeto
+## Uso de Inteligência Artificial
 
-1. **Entrada:** recebe localmente o ZIP, CSV ou diretório sem alterar os arquivos de origem.
-2. **Ingestão:** descobre os quatro conjuntos esperados, valida caminhos, limites e schemas.
-3. **Qualidade:** aplica um catálogo explícito de 20 regras com severidade e motivo rastreáveis.
-4. **Tratamento:** normaliza textos, IDs, datas e valores monetários e remove duplicatas conforme as regras.
-5. **Consolidação:** relaciona vendas válidas às dimensões de consultores, lojas e veículos.
-6. **Persistência:** publica DuckDB, Parquet e relatórios locais por staging, com rollback em falhas capturadas.
-7. **Análise:** calcula faturamento, volume, ticket, desconto, ágio e variação líquida com fórmulas documentadas.
-8. **Dashboard:** apresenta KPIs, filtros, gráficos, qualidade, rastreabilidade e download em Streamlit.
-9. **Testes:** Pytest cobre ingestão, qualidade, persistência, exportação e comportamento do dashboard.
-10. **Decisões:** prioriza execução local, caminhos Windows, valores `DECIMAL`, idempotência lógica e ausência de serviços externos.
+### OpenAI Codex no VS Code
+
+Foi utilizado como apoio à implementação incremental, leitura e revisão de código, refatorações delimitadas, criação de testes e execução de verificações no workspace.
+
+### ChatGPT
+
+Foi utilizado como apoio à análise do desafio, discussão da arquitetura, investigação de problemas, revisão de decisões e estruturação da documentação.
+
+As sugestões não foram tratadas como fonte de verdade. O fluxo adotado foi:
+
+```text
+problema → proposta da IA → revisão humana → execução → comparação com os dados → ajuste
+```
+
+Código e decisões apoiados por IA foram verificados por leitura, execução local, testes automatizados, inspeção das saídas, comparação das métricas, relatório de qualidade e histórico Git. A implementação não chama serviços de IA em runtime nem envia os dados do pipeline a esses serviços.
+
+**A IA foi utilizada como ferramenta de apoio; a responsabilidade e a validação da solução permaneceram com o desenvolvedor.**
+
+## Git e desenvolvimento incremental
+
+Git foi usado para versionamento, revisão de diferenças e registro dos marcos do projeto. O desenvolvimento avançou em pequenos incrementos conceituais: fundação → ingestão → qualidade → consolidação → análise → dashboard → testes e documentação. O histórico preserva essas decisões sem ser necessário conhecer os nomes internos das fases para executar o produto final.
+
+## Limitações e fronteiras da solução
+
+- O contrato é específico aos quatro schemas conhecidos; alterações de origem exigem evolução explícita do contrato.
+- O build completo precisa de vendas e das três dimensões no mesmo conjunto de entrada.
+- O processamento e a carga do dashboard ocorrem em memória, adequados ao volume atual, mas não a volumes distribuídos.
+- A execução é local, de um lote por vez, sem lock para concorrência ou orquestração de múltiplos produtores.
+- A publicação reduz o risco de conjunto parcial e possui rollback para falhas capturadas, mas não é uma transação multi-arquivo resistente a toda interrupção abrupta.
+- A regra de data futura depende do relógio local, e o sentinel `9.999.999` é uma decisão específica desta fonte.
+- O dashboard não possui autenticação e foi projetado para uso local, não para exposição direta em rede não confiável.
+- As versões diretas estão fixadas, mas não há lockfile com hashes de todas as dependências transitivas.
+- NiceGUI permanece como dependência histórica; Streamlit é a única interface utilizada pela solução final.
+
+Essas fronteiras mantêm a entrega proporcional ao desafio. Evoluções como processamento incremental, autenticação, cloud ou execução distribuída só devem ser introduzidas diante de requisitos reais de volume, concorrência, disponibilidade ou segurança operacional.
