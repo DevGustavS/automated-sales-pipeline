@@ -85,8 +85,14 @@ def _create_analytical_database(database: Path) -> None:
                     NULL, '', 'vendas.csv', 6
                 );
             INSERT INTO quality_report VALUES
-                ('invalid_data_venda', 'error', 0, 'passed');
-            INSERT INTO raw_vendas VALUES ('S1'), ('S2'), ('S3'), ('S4'), ('S5');
+                ('duplicate_venda_id', 'error', 2, 'failed'),
+                ('future_data_venda', 'warning', 1, 'warning'),
+                ('invalid_data_venda', 'error', 0, 'passed'),
+                ('missing_venda_id', 'error', 0, 'passed'),
+                ('custom_unmapped_rule', 'warning', 0, 'passed');
+            INSERT INTO raw_vendas VALUES
+                ('S1'), ('S2'), ('S3'), ('S4'), ('S5'), ('S6');
+            INSERT INTO rejected_sales VALUES ('S6');
             """
         )
     finally:
@@ -118,6 +124,18 @@ def _chart_specs(app: AppTest) -> tuple[str, ...]:
 
 def _sidebar_markdown(app: AppTest) -> list[str]:
     return [markdown.value for markdown in app.sidebar.markdown]
+
+
+def _quality_kpi_grid(app: AppTest, class_name: str) -> str:
+    return next(
+        markdown.value
+        for markdown in app.markdown
+        if f'<div class="kpi-grid {class_name}">' in markdown.value
+    )
+
+
+def _quality_table(app: AppTest):
+    return app.tabs[1].dataframe[0].value
 
 
 def test_dashboard_handles_empty_fact_before_building_date_filter(
@@ -154,8 +172,11 @@ def test_dashboard_displays_discount_without_offsetting_reference_premium(
         "Registros afetados",
         "Status",
     ]
-    assert quality_table.iloc[0].to_dict() == {
-        "Regra": "invalid_data_venda",
+    invalid_date = quality_table.loc[
+        quality_table["Regra"].eq("Data de venda inválida")
+    ].iloc[0]
+    assert invalid_date.to_dict() == {
+        "Regra": "Data de venda inválida",
         "Severidade": "Erro",
         "Registros afetados": 0,
         "Status": "Aprovada",
@@ -233,6 +254,155 @@ def test_dashboard_toggles_theme_without_changing_kpis_or_tables(
     restored_kpis = _kpi_grid(app)
     assert "#F7F8FA" in restored_css
     assert restored_kpis == light_kpis
+
+
+def test_quality_tab_displays_volume_rule_kpis_and_friendly_context(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    database = tmp_path / "quality-kpis.duckdb"
+    _create_analytical_database(database)
+    app = _run_dashboard(database, monkeypatch)
+
+    assert not app.exception
+    volume_kpis = _quality_kpi_grid(app, "quality-volume-kpis")
+    assert '<div class="kpi-label">Recebidos</div>' in volume_kpis
+    assert '<div class="kpi-value">6</div>' in volume_kpis
+    assert '<div class="kpi-label">Válidos</div>' in volume_kpis
+    assert '<div class="kpi-value">5</div>' in volume_kpis
+    assert '<div class="kpi-label">Rejeitados</div>' in volume_kpis
+    assert '<div class="kpi-value">1</div>' in volume_kpis
+    assert '<div class="kpi-label">Taxa de aprovação</div>' in volume_kpis
+    assert '<div class="kpi-value">83,33%</div>' in volume_kpis
+
+    rules_kpis = _quality_kpi_grid(app, "quality-rules-kpis")
+    assert '<div class="kpi-label">Regras executadas</div>' in rules_kpis
+    assert '<div class="kpi-value">5</div>' in rules_kpis
+    assert '<div class="kpi-label">Aprovadas</div>' in rules_kpis
+    assert '<div class="kpi-value">3</div>' in rules_kpis
+    assert '<div class="kpi-label">Falhas</div>' in rules_kpis
+    assert '<div class="kpi-value">1</div>' in rules_kpis
+    assert '<div class="kpi-label">Avisos</div>' in rules_kpis
+    assert '<div class="kpi-value">1</div>' in rules_kpis
+
+    markdown_values = [markdown.value for markdown in app.markdown]
+    assert any("Qualidade dos dados" in value for value in markdown_values)
+    assert any("5</b> de <b>6" in value for value in markdown_values)
+    captions = [caption.value for caption in app.caption]
+    assert any("regras de venda podem enviar registros" in value for value in captions)
+    assert any("Aviso mantém a venda válida" in value for value in captions)
+
+
+def test_quality_approval_rate_handles_zero_received_without_invalid_number(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    database = tmp_path / "quality-zero-received.duckdb"
+    _create_analytical_database(database)
+    connection = duckdb.connect(str(database))
+    try:
+        connection.execute("DELETE FROM raw_vendas")
+    finally:
+        connection.close()
+
+    app = _run_dashboard(database, monkeypatch)
+
+    assert not app.exception
+    volume_kpis = _quality_kpi_grid(app, "quality-volume-kpis")
+    assert '<div class="kpi-label">Recebidos</div>' in volume_kpis
+    assert '<div class="kpi-value">0</div>' in volume_kpis
+    assert '<div class="kpi-value">0,00%</div>' in volume_kpis
+    assert "NaN" not in volume_kpis
+    assert "inf" not in volume_kpis.lower()
+
+
+def test_quality_local_severity_filter_only_changes_quality_detail(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    database = tmp_path / "quality-severity.duckdb"
+    _create_analytical_database(database)
+    app = _run_dashboard(database, monkeypatch)
+    overview_kpis = _kpi_grid(app)
+    traceability_sales = _traceability_sales(app)
+
+    app.selectbox("quality_severity_filter").set_value("Aviso").run()
+
+    assert not app.exception
+    quality_table = _quality_table(app)
+    assert set(quality_table["Severidade"]) == {"Aviso"}
+    assert set(quality_table["Regra"]) == {
+        "Data de venda futura",
+        "Custom Unmapped Rule",
+    }
+    assert _kpi_grid(app) == overview_kpis
+    assert _traceability_sales(app) == traceability_sales
+
+
+def test_quality_local_status_filter_and_fallback_rule_name(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    database = tmp_path / "quality-status.duckdb"
+    _create_analytical_database(database)
+    app = _run_dashboard(database, monkeypatch)
+
+    assert "Custom Unmapped Rule" in set(_quality_table(app)["Regra"])
+
+    app.selectbox("quality_status_filter").set_value("Falhou").run()
+
+    assert not app.exception
+    quality_table = _quality_table(app)
+    assert quality_table["Status"].tolist() == ["Falhou"]
+    assert quality_table["Regra"].tolist() == ["Venda duplicada"]
+
+
+def test_quality_local_filters_handle_empty_result(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    database = tmp_path / "quality-empty-filter.duckdb"
+    _create_analytical_database(database)
+    app = _run_dashboard(database, monkeypatch)
+
+    app.selectbox("quality_severity_filter").set_value("Erro")
+    app.selectbox("quality_status_filter").set_value("Aviso")
+    app.run()
+
+    assert not app.exception
+    assert _quality_table(app).empty
+    assert "Nenhuma regra corresponde aos filtros locais selecionados." in [
+        info.value for info in app.info
+    ]
+
+
+def test_quality_chart_uses_friendly_names_and_only_affected_rules(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    database = tmp_path / "quality-chart.duckdb"
+    _create_analytical_database(database)
+    app = _run_dashboard(database, monkeypatch)
+
+    assert not app.exception
+    quality_chart = _chart_specs(app)[-1]
+    assert "Venda duplicada" in quality_chart
+    assert "Data de venda futura" in quality_chart
+    assert "Data de venda inválida" not in quality_chart
+    assert "Custom Unmapped Rule" not in quality_chart
+
+
+def test_quality_exports_the_locally_filtered_report_as_csv(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    database = tmp_path / "quality-export.duckdb"
+    _create_analytical_database(database)
+    app = _run_dashboard(database, monkeypatch)
+
+    app.selectbox("quality_status_filter").set_value("Falhou").run()
+
+    assert not app.exception
+    quality_download = next(
+        button
+        for button in app.get("download_button")
+        if button.label == "Baixar relatório de qualidade"
+    )
+    assert quality_download.url.endswith(".csv")
+    assert _quality_table(app)["Regra"].tolist() == ["Venda duplicada"]
 
 
 def test_dashboard_starts_with_dynamic_filter_options_and_all_sales(

@@ -31,6 +31,28 @@ FILTER_MULTISELECT_KEYS = (
     "filter_payment_methods",
     "filter_consultants",
 )
+QUALITY_RULE_LABELS = {
+    "duplicate_consultor_id": "Consultor duplicado",
+    "duplicate_loja_id": "Loja duplicada",
+    "duplicate_veiculo_id": "Veículo duplicado",
+    "missing_venda_id": "Identificador da venda ausente",
+    "duplicate_venda_id": "Venda duplicada",
+    "invalid_data_venda": "Data de venda inválida",
+    "future_data_venda": "Data de venda futura",
+    "invalid_valor_venda": "Valor de venda inválido",
+    "negative_valor_venda": "Valor de venda negativo",
+    "zero_valor_venda": "Valor de venda igual a zero",
+    "suspicious_valor_venda_placeholder": "Valor de venda suspeito (9.999.999)",
+    "invalid_valor_referencia": "Valor de referência inválido",
+    "missing_veiculo_id": "Identificador do veículo ausente",
+    "orphan_veiculo_id": "Veículo sem correspondência",
+    "missing_loja_id": "Identificador da loja ausente",
+    "orphan_loja_id": "Loja sem correspondência",
+    "missing_consultor_id": "Identificador do consultor ausente",
+    "orphan_consultor_id": "Consultor sem correspondência",
+    "consultor_loja_mismatch": "Consultor vinculado a outra loja",
+    "veiculo_multiple_sales": "Veículo associado a múltiplas vendas",
+}
 
 THEMES = {
     "light": {
@@ -243,6 +265,17 @@ def kpi_card(label: str, value: str) -> str:
 
 def integer(value: float) -> str:
     return f"{int(value):,}".replace(",", ".")
+
+
+def percentage(numerator: float, denominator: float) -> str:
+    if denominator == 0:
+        return "0,00%"
+    return f"{numerator / denominator * 100:.2f}%".replace(".", ",")
+
+
+def friendly_quality_rule(rule: str) -> str:
+    rule_id = str(rule).strip()
+    return QUALITY_RULE_LABELS.get(rule_id, rule_id.replace("_", " ").strip().title())
 
 
 def clear_filters(full_period: tuple[date, date]) -> None:
@@ -600,13 +633,54 @@ with overview_tab:
 
 with quality_tab:
     st.markdown(
+        '<div class="dashboard-title">Qualidade dos dados</div>',
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        '<div class="dashboard-subtitle">Visão das validações executadas pelo '
+        "pipeline e dos registros afetados por problemas de qualidade.</div>",
+        unsafe_allow_html=True,
+    )
+
+    approval_rate = percentage(counts["valid"], counts["received"])
+    volume_kpis = "".join(
+        [
+            kpi_card("Recebidos", integer(counts["received"])),
+            kpi_card("Válidos", integer(counts["valid"])),
+            kpi_card("Rejeitados", integer(counts["rejected"])),
+            kpi_card("Taxa de aprovação", approval_rate),
+        ]
+    )
+    st.markdown(
+        f'<div class="kpi-grid quality-volume-kpis">{volume_kpis}</div>',
+        unsafe_allow_html=True,
+    )
+
+    rules_executed = len(quality)
+    rules_passed = int(quality["status"].eq("passed").sum())
+    rules_failed = int(quality["status"].eq("failed").sum())
+    rules_warning = int(quality["status"].eq("warning").sum())
+    rules_kpis = "".join(
+        [
+            kpi_card("Regras executadas", integer(rules_executed)),
+            kpi_card("Aprovadas", integer(rules_passed)),
+            kpi_card("Falhas", integer(rules_failed)),
+            kpi_card("Avisos", integer(rules_warning)),
+        ]
+    )
+    st.markdown(
+        f'<div class="kpi-grid quality-rules-kpis">{rules_kpis}</div>',
+        unsafe_allow_html=True,
+    )
+
+    st.markdown(
         f'<div class="quality-note"><b>{integer(counts["valid"])}</b> de '
         f"<b>{integer(counts['received'])}</b> registros foram aprovados; "
         f"<b>{integer(counts['rejected'])}</b> foram enviados para quarentena.</div>",
         unsafe_allow_html=True,
     )
     st.markdown(
-        '<div class="section-title">Resultado das validações</div>',
+        '<div class="section-title">Principais problemas encontrados</div>',
         unsafe_allow_html=True,
     )
     quality_display = quality.rename(
@@ -617,30 +691,102 @@ with quality_tab:
             "status": "Status",
         }
     ).copy()
+    quality_display["Regra"] = quality_display["Regra"].map(friendly_quality_rule)
     quality_display["Severidade"] = quality_display["Severidade"].replace(
         {"error": "Erro", "warning": "Aviso"}
     )
     quality_display["Status"] = quality_display["Status"].replace(
         {"passed": "Aprovada", "failed": "Falhou", "warning": "Aviso"}
     )
-    st.dataframe(quality_display, width="stretch", hide_index=True)
 
     quality_chart_data = quality_display[
         quality_display["Registros afetados"] > 0
     ].sort_values("Registros afetados")
-    quality_chart = px.bar(
-        quality_chart_data,
-        x="Registros afetados",
-        y="Regra",
-        orientation="h",
-        color="Severidade",
-        color_discrete_map={"Erro": COLORS["red"], "Aviso": COLORS["orange"]},
-        title="Ocorrências por regra de qualidade",
-        labels={"Registros afetados": "Registros", "Regra": ""},
+    if quality_chart_data.empty:
+        st.info("Nenhuma ocorrência de qualidade foi registrada nesta execução.")
+    else:
+        quality_chart = px.bar(
+            quality_chart_data,
+            x="Registros afetados",
+            y="Regra",
+            orientation="h",
+            color="Severidade",
+            color_discrete_map={"Erro": COLORS["red"], "Aviso": COLORS["orange"]},
+            title="Ocorrências por regra de qualidade",
+            labels={"Registros afetados": "Registros", "Regra": ""},
+        )
+        quality_chart.update_traces(
+            marker_cornerradius=5,
+            hovertemplate="%{y}<br>%{x:,} registros<extra></extra>",
+        )
+        style_figure(quality_chart, 470)
+        st.plotly_chart(
+            quality_chart,
+            width="stretch",
+            config={"displaylogo": False},
+        )
+
+    st.markdown(
+        '<div class="section-title">Detalhamento das validações</div>',
+        unsafe_allow_html=True,
     )
-    quality_chart.update_traces(marker_cornerradius=5)
-    style_figure(quality_chart, 470)
-    st.plotly_chart(quality_chart, width="stretch", config={"displaylogo": False})
+    st.caption(
+        "Erro identifica uma falha crítica: regras de venda podem enviar registros "
+        "à quarentena, enquanto duplicidades em dimensões preservam a primeira "
+        "ocorrência. Aviso mantém a venda válida e sinaliza necessidade de análise."
+    )
+
+    severity_column, status_column = st.columns(2)
+    with severity_column:
+        selected_quality_severity = st.selectbox(
+            "Severidade",
+            ["Todas", "Erro", "Aviso"],
+            key="quality_severity_filter",
+        )
+    with status_column:
+        selected_quality_status = st.selectbox(
+            "Status",
+            ["Todos", "Aprovada", "Falhou", "Aviso"],
+            key="quality_status_filter",
+        )
+
+    filtered_quality_display = quality_display.copy()
+    if selected_quality_severity != "Todas":
+        filtered_quality_display = filtered_quality_display[
+            filtered_quality_display["Severidade"].eq(selected_quality_severity)
+        ]
+    if selected_quality_status != "Todos":
+        filtered_quality_display = filtered_quality_display[
+            filtered_quality_display["Status"].eq(selected_quality_status)
+        ]
+
+    if filtered_quality_display.empty:
+        st.info("Nenhuma regra corresponde aos filtros locais selecionados.")
+
+    st.dataframe(
+        filtered_quality_display,
+        width="stretch",
+        hide_index=True,
+        column_config={
+            "Regra": st.column_config.TextColumn("Regra", width="large"),
+            "Severidade": st.column_config.TextColumn("Severidade"),
+            "Registros afetados": st.column_config.NumberColumn(
+                "Registros afetados", format="%d"
+            ),
+            "Status": st.column_config.TextColumn("Status"),
+        },
+    )
+
+    quality_csv_bytes = filtered_quality_display.to_csv(index=False, sep=";").encode(
+        "utf-8-sig"
+    )
+    st.download_button(
+        "Baixar relatório de qualidade",
+        data=quality_csv_bytes,
+        file_name="relatorio_qualidade.csv",
+        mime="text/csv",
+        width="content",
+    )
 
 with traceability_tab:
     st.markdown(f"**{integer(len(filtered))} registros rastreáveis após os filtros**")
