@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from datetime import date
 from pathlib import Path
 
 import duckdb
@@ -22,6 +23,14 @@ COLORS = {
     "red": "#E56458",
 }
 PALETTE = ["#5E9FE8", "#EAC26B", "#72BC8F", "#BF8EDA", "#DE9255", "#DF84A8"]
+FILTER_MULTISELECT_KEYS = (
+    "filter_brands",
+    "filter_stores",
+    "filter_states",
+    "filter_channels",
+    "filter_payment_methods",
+    "filter_consultants",
+)
 
 THEMES = {
     "light": {
@@ -63,7 +72,7 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-dark_mode = st.sidebar.toggle("🌙 Modo escuro", value=False)
+dark_mode = st.sidebar.toggle("🌙 Modo escuro", value=False, key="dark_mode")
 THEME = THEMES["dark" if dark_mode else "light"]
 
 st.markdown(
@@ -236,6 +245,12 @@ def integer(value: float) -> str:
     return f"{int(value):,}".replace(",", ".")
 
 
+def clear_filters(full_period: tuple[date, date]) -> None:
+    st.session_state["filter_period"] = full_period
+    for key in FILTER_MULTISELECT_KEYS:
+        st.session_state[key] = []
+
+
 def style_figure(fig: go.Figure, height: int = 360) -> go.Figure:
     fig.update_layout(
         height=height,
@@ -331,19 +346,41 @@ if sales.empty:
 st.sidebar.markdown("### Filtros")
 minimum_date = sales["data_venda"].min().date()
 maximum_date = sales["data_venda"].max().date()
+full_period = (minimum_date, maximum_date)
+if "filter_period" not in st.session_state:
+    st.session_state["filter_period"] = full_period
 date_range = st.sidebar.date_input(
     "Período",
-    value=(minimum_date, maximum_date),
     min_value=minimum_date,
     max_value=maximum_date,
+    key="filter_period",
 )
 
 brands = sorted(sales["marca"].dropna().unique().tolist())
 stores = sorted(sales["loja"].dropna().unique().tolist())
 states = sorted(sales["uf"].dropna().unique().tolist())
-selected_brands = st.sidebar.multiselect("Marcas", brands)
-selected_stores = st.sidebar.multiselect("Lojas", stores)
-selected_states = st.sidebar.multiselect("UF", states)
+channels = sorted(sales["canal_origem"].dropna().unique().tolist())
+payment_methods = sorted(sales["forma_pagamento"].dropna().unique().tolist())
+consultants = sorted(sales["consultor"].dropna().unique().tolist())
+selected_brands = st.sidebar.multiselect("Marcas", brands, key="filter_brands")
+selected_stores = st.sidebar.multiselect("Lojas", stores, key="filter_stores")
+selected_states = st.sidebar.multiselect("UF", states, key="filter_states")
+selected_channels = st.sidebar.multiselect(
+    "Canal de origem", channels, key="filter_channels"
+)
+selected_payment_methods = st.sidebar.multiselect(
+    "Forma de pagamento", payment_methods, key="filter_payment_methods"
+)
+selected_consultants = st.sidebar.multiselect(
+    "Consultor", consultants, key="filter_consultants"
+)
+st.sidebar.button(
+    "Limpar filtros",
+    key="clear_filters",
+    on_click=clear_filters,
+    args=(full_period,),
+    width="stretch",
+)
 
 filtered = sales.copy()
 if isinstance(date_range, (tuple, list)) and len(date_range) == 2:
@@ -355,6 +392,36 @@ if selected_stores:
     filtered = filtered[filtered["loja"].isin(selected_stores)]
 if selected_states:
     filtered = filtered[filtered["uf"].isin(selected_states)]
+if selected_channels:
+    filtered = filtered[filtered["canal_origem"].isin(selected_channels)]
+if selected_payment_methods:
+    filtered = filtered[filtered["forma_pagamento"].isin(selected_payment_methods)]
+if selected_consultants:
+    filtered = filtered[filtered["consultor"].isin(selected_consultants)]
+
+period_is_filtered = not (
+    isinstance(date_range, (tuple, list))
+    and len(date_range) == 2
+    and tuple(date_range) == full_period
+)
+filters_are_active = period_is_filtered or any(
+    (
+        selected_brands,
+        selected_stores,
+        selected_states,
+        selected_channels,
+        selected_payment_methods,
+        selected_consultants,
+    )
+)
+if filters_are_active:
+    st.sidebar.markdown("**● Filtros ativos**")
+else:
+    st.sidebar.caption("Nenhum filtro ativo")
+
+filtered_count = len(filtered)
+result_label = "venda encontrada" if filtered_count == 1 else "vendas encontradas"
+st.sidebar.markdown(f"**{integer(filtered_count)} {result_label}**")
 
 st.markdown(
     '<div class="dashboard-kicker">Automated Sales Pipeline</div>',
@@ -370,7 +437,10 @@ st.markdown(
 )
 
 if filtered.empty:
-    st.warning("Nenhum registro corresponde aos filtros selecionados.")
+    st.warning(
+        "Nenhuma venda corresponde aos filtros selecionados. "
+        "Ajuste ou limpe os filtros para continuar."
+    )
     st.stop()
 
 revenue = float(filtered["valor_venda"].sum())
