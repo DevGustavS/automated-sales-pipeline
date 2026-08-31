@@ -170,6 +170,27 @@ Os artefatos gerados não são versionados. Eles podem ser reconstruídos a part
 
 `pipeline.py` e `build_pipeline.py` permanecem separados intencionalmente: o primeiro valida a entrada não confiável; o segundo contém decisões de transformação e negócio.
 
+## Estrutura do projeto
+
+```text
+automated-sales-pipeline-final/
+├── .streamlit/config.toml
+├── data/
+│   ├── incoming/       # ZIPs locais de entrada (ignorados pelo Git)
+│   ├── output/         # DuckDB, Parquet e relatório gerados
+│   └── quarantine/     # vendas rejeitadas pelo pipeline
+├── docs/challenge.md
+├── tests/
+├── app.py              # launcher: pipeline + dashboard
+├── build_pipeline.py   # transformação, qualidade e publicação
+├── dashboard.py        # dashboard Streamlit somente leitura
+├── export_csv.py       # exportação opcional da fato completa
+├── pipeline.py         # ingestão e validação estrutural
+├── README.md
+├── requirements.txt
+└── SECURITY.md
+```
+
 ## Principais decisões técnicas
 
 | Tecnologia ou prática | Por que foi escolhida |
@@ -185,8 +206,6 @@ Os artefatos gerados não são versionados. Eles podem ser reconstruídos a part
 | Ruff | Verifica erros estáticos, estilo e formatação do código. |
 | pip-audit | Consulta vulnerabilidades conhecidas nas dependências Python. |
 | Git | Registra mudanças e checkpoints de forma incremental e revisável. |
-
-NiceGUI permanece fixado em `requirements.txt` por herança da fundação inicial, mas não é importado pelo código entregue. A interface funcional usa Streamlit.
 
 ### Por que a solução é local
 
@@ -204,32 +223,23 @@ O tratamento separa ocorrência, severidade e destino:
 - `quality_issues` guarda todos os identificadores aplicáveis à linha, pois uma venda pode falhar em mais de uma regra;
 - a quarentena preserva os registros rejeitados em vez de apagá-los.
 
-### Regras executadas na base de referência
+### Principais ocorrências na base de referência
 
 | Regra | Severidade | Ocorrências | Tratamento principal |
 |---|---:|---:|---|
-| `duplicate_consultor_id` | error | 0 | Primeira ocorrência seria usada no relacionamento. |
-| `duplicate_loja_id` | error | 0 | Primeira ocorrência seria usada no relacionamento. |
-| `duplicate_veiculo_id` | error | 0 | Primeira ocorrência seria usada no relacionamento. |
-| `missing_venda_id` | error | 0 | Quarentena. |
 | `duplicate_venda_id` | error | 174 | Mantém a primeira venda e envia posteriores à quarentena. |
 | `invalid_data_venda` | error | 69 | Quarentena. |
-| `future_data_venda` | warning | 0 | Mantém a venda e sinaliza. |
 | `invalid_valor_venda` | error | 289 | Quarentena. |
 | `negative_valor_venda` | error | 35 | Quarentena. |
 | `zero_valor_venda` | error | 34 | Quarentena. |
 | `suspicious_valor_venda_placeholder` | error | 44 | Quarentena para o sentinel específico da fonte. |
-| `invalid_valor_referencia` | warning | 0 | Mantém a venda e sinaliza. |
-| `missing_veiculo_id` | error | 0 | Quarentena. |
 | `orphan_veiculo_id` | error | 58 | Quarentena. |
-| `missing_loja_id` | error | 0 | Quarentena. |
 | `orphan_loja_id` | error | 58 | Quarentena. |
-| `missing_consultor_id` | warning | 0 | Mantém a venda e sinaliza. |
 | `orphan_consultor_id` | warning | 117 | Mantém a venda e sinaliza. |
 | `consultor_loja_mismatch` | warning | 58 | Mantém a venda e sinaliza. |
 | `veiculo_multiple_sales` | warning | 406 | Mantém as vendas e sinaliza. |
 
-O catálogo possui **20 regras: 14 `error` e 6 `warning`**. As ocorrências podem se sobrepor na mesma linha; por isso a soma de `failed_rows` não equivale ao total de vendas rejeitadas.
+O catálogo completo possui **20 regras: 14 `error` e 6 `warning`** e está disponível em `quality_report`. A tabela acima destaca apenas regras com ocorrências na base fornecida. As ocorrências podem se sobrepor na mesma linha; por isso a soma de `failed_rows` não equivale ao total de vendas rejeitadas.
 
 ### Tratamentos que exigiram decisão explícita
 
@@ -375,6 +385,14 @@ Git foi usado para versionamento, revisão de diferenças e registro dos marcos 
 - A regra de data futura depende do relógio local, e o sentinel `9.999.999` é uma decisão específica desta fonte.
 - O dashboard não possui autenticação e foi projetado para uso local, não para exposição direta em rede não confiável.
 - As versões diretas estão fixadas, mas não há lockfile com hashes de todas as dependências transitivas.
-- NiceGUI permanece como dependência histórica; Streamlit é a única interface utilizada pela solução final.
 
 Essas fronteiras mantêm a entrega proporcional ao desafio. Evoluções como processamento incremental, autenticação, cloud ou execução distribuída só devem ser introduzidas diante de requisitos reais de volume, concorrência, disponibilidade ou segurança operacional.
+
+## Reprodução rápida
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\python.exe -m pytest -q
+.\.venv\Scripts\python.exe app.py --zip "teste_candidatos.zip"
+```
