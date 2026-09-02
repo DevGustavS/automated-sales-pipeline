@@ -33,8 +33,8 @@ As instruções abaixo usam Windows e PowerShell. Não é necessário ativar man
 ### 1. Clonar e entrar no projeto
 
 ```powershell
-git clone <URL-do-repositorio>
-cd automated-sales-pipeline-final
+git clone https://github.com/eurafff/automated-sales-pipeline.git
+cd automated-sales-pipeline
 ```
 
 ### 2. Criar o ambiente virtual
@@ -298,6 +298,7 @@ As contagens e somas da fato foram comparadas logicamente entre DuckDB, Parquet 
 O dashboard é uma camada de consulta: ele não executa nem altera o processamento. `dashboard.py` abre `sales_pipeline.duckdb` com `read_only=True` e oferece:
 
 - KPIs de faturamento, vendas, ticket médio e desconto concedido;
+- números no padrão brasileiro, com valores monetários compactos em `mil`, `M` e `B` e duas casas decimais nos hovers;
 - filtros por período, marca, loja, UF, canal, forma de pagamento e consultor;
 - gráficos de evolução mensal, marca, loja, canal e forma de pagamento;
 - tema claro e escuro;
@@ -351,7 +352,7 @@ git diff --check
 - `pip-audit` consulta vulnerabilidades conhecidas nas dependências.
 - `git diff --check` detecta erros de whitespace no diff.
 
-Na revisão desta entrega, a suíte atual executou **117 testes com sucesso**.
+Na revisão desta entrega, a suíte atual executou **146 testes com sucesso**.
 
 ## Metodologia de desenvolvimento
 
@@ -407,5 +408,7 @@ Essas fronteiras mantêm a entrega proporcional ao desafio. Evoluções como pro
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
 .\.venv\Scripts\python.exe -m pytest -q
+
+# Coloque o ZIP recebido em data/incoming/ e depois execute
 .\.venv\Scripts\python.exe app.py
 ```
