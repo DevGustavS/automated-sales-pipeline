@@ -33,7 +33,7 @@ As instruções abaixo usam Windows e PowerShell. Não é necessário ativar man
 ### 1. Clonar e entrar no projeto
 
 ```powershell
-git clone https://github.com/eurafff/automated-sales-pipeline.git
+git clone https://github.com/DevGustavS/automated-sales-pipeline.git
 cd automated-sales-pipeline
 ```
 
@@ -189,7 +189,7 @@ Os artefatos gerados não são versionados. Eles podem ser reconstruídos a part
 automated-sales-pipeline-final/
 ├── .streamlit/config.toml
 ├── data/
-│   ├── incoming/       # ZIPs locais de entrada (ignorados pelo Git)
+│   ├── incoming/       # arquivos locais de entrada
 │   ├── output/         # DuckDB, Parquet e relatório gerados
 │   └── quarantine/     # vendas rejeitadas pelo pipeline
 ├── docs/challenge.md
